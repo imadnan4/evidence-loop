@@ -7,6 +7,6 @@
     "@evidence-loop/contracts": "workspace:*"
   },
   "scripts": {
-    "check": "node --test tests/assessment-authoring.test.ts"
+    "check": "node --test tests/assessment-authoring.test.ts tests/artifact-provenance.test.ts"
   }
 }
