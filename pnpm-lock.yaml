@@ -1,0 +1,21 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  apps/api:
+    dependencies:
+      '@evidence-loop/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+
+  apps/web: {}
+
+  packages/contracts: {}
+
+  packages/ui: {}
