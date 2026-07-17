@@ -1,0 +1,12 @@
+{
+  "name": "@evidence-loop/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@evidence-loop/contracts": "workspace:*"
+  },
+  "scripts": {
+    "check": "node --test tests/assessment-authoring.test.ts"
+  }
+}
