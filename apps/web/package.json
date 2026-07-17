@@ -1,0 +1,10 @@
+{
+  "name": "@evidence-loop/web-shell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node ./scripts/check-shell.mjs",
+    "start": "node ./scripts/serve.mjs"
+  }
+}
