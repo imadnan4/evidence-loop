@@ -10,6 +10,8 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
+# Compose credentials are generated locally; never commit a runnable environment.
+infra/env/.env.local
 dist/
 coverage/
 .next/
@@ -17,6 +19,7 @@ coverage/
 # Local-only planning, agent coordination, and skill state.
 *.md
 !README.md
+!infra/**/*.md
 docs/
 skills-lock.json
 .agents/

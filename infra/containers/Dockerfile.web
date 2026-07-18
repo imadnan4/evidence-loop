@@ -1,0 +1,8 @@
+FROM node:24.12.0-bookworm-slim
+
+WORKDIR /app
+COPY --chown=node:node apps/web ./apps/web
+COPY --chown=node:node packages/ui/src ./packages/ui/src
+USER node
+EXPOSE 3000
+CMD ["node", "apps/web/scripts/serve.mjs"]

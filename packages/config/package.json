@@ -1,0 +1,13 @@
+{
+  "name": "@evidence-loop/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/env.ts"
+  },
+  "scripts": {
+    "check": "node --test src/env.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

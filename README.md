@@ -31,19 +31,24 @@ apps/
   api/          Assessment, artifact, session, AI, and voice services
   web/          Static learner and instructor web shell
 packages/
+  config/       Runnable server-only environment validation
   contracts/    Versioned v1 domain and API contracts
   ui/           Reusable design tokens, CSS primitives, and components
 ```
 
-`packages/config` is an intentionally empty workspace directory, not a published or runnable package.
+`packages/config` is a private workspace package used by server processes to validate environment configuration; it is not browser code or a published package.
 
 ## Local setup
 
-**Requirements:** Node.js 24 or later and pnpm 11 or later. The workspace pins `pnpm@11.12.0`.
+**Requirements:** Node.js 24 or later, pnpm 11 or later, and Docker Compose for the synthetic local dependency stack. The workspace pins `pnpm@11.12.0`.
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
+node scripts/create-local-env.mjs
+docker compose --env-file infra/env/.env.local up --wait
 ```
+
+This starts only loopback-bound PostgreSQL and private MinIO zones (`quarantine`, `clean`, and `derived`) for **synthetic data**. It does not create a database schema, deploy an API, or authorize real learner records. See [`infra/OPERATIONS.md`](infra/OPERATIONS.md) before resetting volumes or rotating local credentials.
 
 Run the static web shell:
 
@@ -55,28 +60,16 @@ It listens on `http://localhost:3000` by default. The web shell uses synthetic d
 
 ## Checks
 
-Run the checks owned by each workspace package:
-
 ```bash
-# Contracts only (this is what the root command runs)
+# Canonical workspace checks: format, config typecheck/tests, contracts, API
+# (including the session state machine), web, UI, smoke, env template, Compose config.
 pnpm check
-# or: pnpm check:contracts
 
-# API: assessment, artifact, AI, and voice tests
-pnpm --filter @evidence-loop/api check
-
-# Web shell and browser-flow tests
-pnpm --filter @evidence-loop/web-shell check
-
-# UI design-system checks
-pnpm --filter @evidence-loop/ui check
+# Starts an isolated throwaway Compose stack, checks bucket privacy, then removes volumes.
+pnpm run compose:smoke
 ```
 
-There is no root command that runs every workspace check, so run the relevant package commands above when validating a change. The release smoke check starts the static shell on an ephemeral local port and verifies the synthetic routes and basic HTTP boundaries:
-
-```bash
-node scripts/release-smoke.mjs
-```
+The release smoke check still starts the static shell on an ephemeral local port and verifies only its synthetic routes and basic HTTP boundaries.
 
 ## Synthetic demo walkthrough
 
