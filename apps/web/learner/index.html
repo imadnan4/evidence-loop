@@ -3,61 +3,123 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Evidence Loop learner workspace shell" />
-    <title>Learner workspace · Evidence Loop</title>
+    <meta name="description" content="Evidence Loop text check-in" />
+    <title>Text check-in · Evidence Loop</title>
     <link rel="stylesheet" href="/assets/shell.css" />
+    <link rel="stylesheet" href="/assets/learner-checkin.css" />
   </head>
   <body>
     <a class="el-skip-link" href="#main-content">Skip to main content</a>
     <div class="el-shell">
       <header class="el-topbar">
         <a class="el-brand" href="/"><span class="el-brand-mark" aria-hidden="true">E</span>Evidence Loop</a>
-        <div class="el-topbar-actions"><span class="el-badge el-badge--info">Synthetic workspace</span><a class="el-button" href="/instructor/">Instructor preview</a></div>
+        <span class="el-badge el-badge--info">Synthetic demo</span>
       </header>
-      <div class="el-layout">
-        <aside class="el-sidebar">
-          <nav aria-label="Learner workspace">
-            <ul>
-              <li><a class="el-nav-link" aria-current="page" href="/learner/">Workspace</a></li>
-              <li><a class="el-nav-link" href="#accessibility">Accessibility</a></li>
-              <li><a class="el-nav-link" href="#support">Support</a></li>
-            </ul>
-          </nav>
-        </aside>
-        <main class="el-main" id="main-content">
-          <div class="el-content el-stack-lg">
-            <section aria-labelledby="learner-title">
-              <p class="el-breadcrumb"><a href="/">Evidence Loop</a> / Learner workspace</p>
-              <p class="el-eyebrow">Learner shell</p>
-              <h1 id="learner-title">A focused place to show your thinking.</h1>
-              <p class="el-lede">This is an accessible layout placeholder. It has no connected assessment, artifact upload, question flow, or learner record.</p>
+      <main class="el-main el-learner-main" id="main-content">
+        <div class="el-content el-learner-content">
+          <p class="el-breadcrumb"><a href="/">Evidence Loop</a> / Text check-in</p>
+          <div id="checkin-status" class="el-visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+          <p id="checkin-error" class="el-inline-error" role="alert" tabindex="-1" hidden></p>
+
+          <section id="briefing-view" class="el-stack-lg" aria-labelledby="briefing-title">
+            <div>
+              <p class="el-eyebrow">Before you begin</p>
+              <h1 id="briefing-title">Show your thinking in a short text check-in.</h1>
+              <p class="el-lede">This check-in helps your instructor review evidence of your learning. It does not automatically grade you or make a final decision.</p>
+            </div>
+
+            <section class="el-card el-card--raised el-stack" aria-labelledby="policy-title">
+              <h2 id="policy-title">Assessment policy</h2>
+              <p id="policy-text">Loading the learner-facing policy…</p>
+              <dl class="el-policy-grid">
+                <div class="el-policy-item"><dt>AI use</dt><dd id="ai-use-policy">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Policy version</dt><dd id="policy-version">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Privacy and retention</dt><dd id="privacy-summary">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Completion</dt><dd id="completion-criteria">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Assessment route</dt><dd>Typed responses. Voice is not required for this check-in.</dd></div>
+              </dl>
             </section>
 
-            <section class="el-grid" aria-label="Learner workspace placeholders">
-              <article class="el-card el-card--raised">
-                <div class="el-placeholder-icon" aria-hidden="true">○</div>
-                <h2 class="el-card__title">Assessment space</h2>
-                <p class="el-card__body">When a check-in feature is available, its instructions and progress will appear in this single, calm workspace.</p>
-                <p class="el-route-note">Synthetic placeholder only — nothing is submitted from this route.</p>
-              </article>
-              <article class="el-card el-card--flat" id="accessibility">
-                <div class="el-placeholder-icon" aria-hidden="true">⌨</div>
-                <h2 class="el-card__title">Keyboard-first foundation</h2>
-                <p class="el-card__body">Use Tab to move through controls. A skip link appears at the start of each page, and focus remains visible at every destination.</p>
-              </article>
-              <article class="el-card el-card--flat" id="support">
-                <div class="el-placeholder-icon" aria-hidden="true">?</div>
-                <h2 class="el-card__title">Support</h2>
-                <p class="el-card__body">A future assessment feature can offer a clear route to human support. This shell makes no automated decisions.</p>
-              </article>
-            </section>
-
-            <aside class="el-callout" aria-label="Synthetic content notice">
-              <strong>Synthetic placeholder.</strong> This route is a visual and accessibility shell only. It does not collect responses or access an assessment.
+            <aside class="el-callout" aria-labelledby="access-title">
+              <strong id="access-title">Accessibility and support</strong>
+              <p>This text route is available to every learner. You can pause and resume without losing your place. If you need an alternative assessment route before starting, contact your instructor or course support.</p>
+              <button id="show-support" class="el-button el-button--quiet" type="button">Find human support options</button>
             </aside>
-          </div>
-        </main>
-      </div>
+
+            <label class="el-acknowledgement" for="policy-acknowledgement">
+              <input id="policy-acknowledgement" type="checkbox" />
+              <span>I reviewed the purpose, AI-use policy, privacy summary, and completion options for this check-in.</span>
+            </label>
+            <div class="el-cluster">
+              <button id="start-checkin" class="el-button el-button--primary" type="button" disabled>Start text check-in</button>
+              <span class="el-help">The server sets the finite question and time budget for this check-in.</span>
+            </div>
+          </section>
+
+          <section id="checkin-view" class="el-stack-lg" aria-labelledby="question-heading" hidden>
+            <div class="el-session-banner">
+              <span class="el-badge el-badge--info">Text check-in</span>
+              <span class="el-help">Your typed response is the canonical record.</span>
+            </div>
+            <div class="el-progress" aria-label="Question budget">
+              <div class="el-progress__label"><span id="question-number">Question</span><span id="progress-text">Planned questions remaining</span></div>
+              <progress id="checkin-progress" value="0" max="5">0 of planned questions</progress>
+            </div>
+            <form id="response-form" class="el-card el-card--raised el-question-card">
+              <div>
+                <p class="el-question-label">Take your time. Use your own words and refer to your submitted work where helpful.</p>
+                <h1 id="question-heading" class="el-question-text" tabindex="-1"><span id="question-text"></span></h1>
+              </div>
+              <div class="el-field">
+                <label class="el-label" for="typed-response">Your typed response</label>
+                <textarea id="typed-response" class="el-textarea" name="typed-response" required aria-describedby="response-help" spellcheck="true"></textarea>
+                <p id="response-help" class="el-help">You can edit before you continue. A response is saved only when you select Continue.</p>
+              </div>
+              <div class="el-question-actions">
+                <div class="el-question-actions__secondary">
+                  <button id="pause-checkin" class="el-button" type="button">Pause and save my place</button>
+                  <button id="request-follow-up" class="el-button el-button--quiet" type="button">Request human follow-up</button>
+                </div>
+                <button class="el-button el-button--primary" type="submit">Continue</button>
+              </div>
+            </form>
+          </section>
+
+          <section id="paused-view" class="el-card el-card--raised el-paused-panel" aria-labelledby="paused-title" hidden>
+            <p class="el-eyebrow">Check-in paused</p>
+            <h1 id="paused-title" tabindex="-1">Your place is saved.</h1>
+            <p>Your current typed draft remains in this browser. Paused time does not use your planned check-in time.</p>
+            <div class="el-cluster"><button id="resume-checkin" class="el-button el-button--primary" type="button">Resume the same question</button></div>
+          </section>
+
+          <section id="receipt-view" class="el-stack-lg" aria-labelledby="receipt-title" hidden>
+            <div>
+              <p class="el-eyebrow">Check-in receipt</p>
+              <h1 id="receipt-title" tabindex="-1">Your text check-in is complete.</h1>
+              <p id="receipt-intro" class="el-lede"></p>
+            </div>
+            <section class="el-card el-card--raised el-stack" aria-labelledby="receipt-details-title">
+              <h2 id="receipt-details-title">Your record</h2>
+              <div class="el-receipt-meta">
+                <span><strong>Completed:</strong> <time id="receipt-completed"></time></span>
+                <span><strong>Policy version:</strong> <span id="receipt-policy"></span></span>
+                <span>Your instructor reviews any evidence and makes all final decisions.</span>
+              </div>
+              <ol id="receipt-responses" class="el-receipt-list" aria-label="Your questions and typed responses"></ol>
+            </section>
+            <aside class="el-callout"><strong>Need a correction or another route?</strong><p>You can ask your instructor for a correction or an alternative assessment route. This receipt is not a grade.</p></aside>
+          </section>
+
+          <section id="support-view" class="el-card el-card--raised el-stack" aria-labelledby="support-title" hidden>
+            <p class="el-eyebrow">Human support</p>
+            <h1 id="support-title" tabindex="-1">Contact your instructor or course support.</h1>
+            <p>Use the contact route provided in your course to request an accommodation or alternative assessment route. No request has been sent from this page.</p>
+          </section>
+
+          <footer class="el-learner-footer">Synthetic demo account. This text flow does not generate grades, misconduct findings, or personal inferences.</footer>
+        </div>
+      </main>
     </div>
+    <script type="module" src="/assets/learner-checkin.js"></script>
   </body>
 </html>
