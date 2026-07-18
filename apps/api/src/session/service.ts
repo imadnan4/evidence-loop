@@ -27,8 +27,11 @@ import type {
   StartTextSessionInput,
   StartedSession,
   SubmittedResponse,
+  SubmittedVoiceResponse,
   SubmitTextResponseInput,
+  SubmitVoiceResponseInput,
   TrustedSessionResolver,
+  VoiceTranscript,
 } from "./types.ts";
 
 export class SessionError extends Error {
@@ -91,6 +94,7 @@ export class TextCheckInSessionService {
         policy: Object.freeze(normalized.policy),
         pauseAndResume: normalized.pauseAndResume,
         timeBudgetMinutes: normalized.timeBudgetMinutes,
+        voiceCheckInEnabled: normalized.voiceCheckInEnabled,
         objectives: Object.freeze(normalized.objectives.map((objective) => Object.freeze({ ...objective }))),
         objectiveSources: Object.freeze(
           normalized.objectiveSources.map((entry) =>
@@ -198,6 +202,88 @@ export class TextCheckInSessionService {
     });
   }
 
+  /**
+   * The single F07a submit boundary. It uses the same session repository as
+   * text answers so one transaction owns raw transcript, canonical response,
+   * audit entries, question budget, and idempotency.
+   */
+  submitVoiceResponse(actor: Actor, input: SubmitVoiceResponseInput): SubmittedVoiceResponse {
+    this.assertAllowedKeys(input, "submitVoiceResponse", ["sessionId", "questionId", "transcript", "editedTranscript", "idempotencyKey"]);
+    const actorId = this.actorId(actor);
+    const session = this.requireOwnedSession(actor, input.sessionId);
+    const context = this.requireContext(session.id);
+    const transcript = this.requireText(input.transcript, "transcript");
+    const editedTranscript = input.editedTranscript === null ? null : this.requireText(input.editedTranscript, "editedTranscript");
+    const canonicalText = editedTranscript ?? transcript;
+    const idempotencyKey = this.requireOpaque(input.idempotencyKey, "idempotencyKey");
+    const scope = `${actorId}:submit-voice-response:${idempotencyKey}`;
+    const fingerprint = stableJson({ sessionId: session.id, questionId: input.questionId, transcript, editedTranscript, idempotencyKey });
+    const replay = this.repository.getIdempotentResult<SubmittedVoiceResponse>(scope, fingerprint);
+    if (replay !== undefined) return replay;
+
+    if (!context.voiceCheckInEnabled) throw new SessionError("INVALID_STATE", "Voice is not enabled for this check-in.");
+    if (session.state !== "in_progress") throw new SessionError("INVALID_STATE", "Voice responses can only be submitted while the check-in is in progress.");
+    const submittedAt = this.now();
+    this.completeIfTimeBudgetReached(session, context, actorId, submittedAt);
+    const question = this.requireQuestion(input.questionId);
+    if (question.session_id !== session.id || question.submission_id !== session.submission_id) throw this.notFound();
+    if (this.repository.getResponseForQuestion(question.id)) throw new SessionError("CONFLICT", "This question already has a canonical response.");
+
+    const response: Response = ResponseSchema.parse({
+      id: this.id(), question_id: question.id, session_id: session.id, submission_id: session.submission_id,
+      modality: "voice", canonical_text: canonicalText, edited_text: editedTranscript,
+      started_at: session.started_at, submitted_at: submittedAt,
+    });
+    const voiceTranscript: VoiceTranscript = Object.freeze({
+      id: `transcript_${this.id()}`, responseId: response.id, sessionId: session.id, submissionId: session.submission_id,
+      questionId: question.id, modality: "voice", transcript, editedTranscript, canonicalText,
+      createdAt: submittedAt, submittedAt,
+    });
+    const responseEvent = this.newEvent(session, actorId, "response_submitted", "in_progress", "in_progress", submittedAt);
+    let nextQuestion: Question | null = null;
+    let nextSession: CheckInSession;
+    const events: SessionTimelineEvent[] = [responseEvent];
+    if (session.questions_asked === session.question_budget) {
+      nextSession = CheckInSessionSchema.parse({ ...session, state: "completed", completed_at: submittedAt });
+      events.push(this.newEvent(nextSession, actorId, "session_completed", "in_progress", "completed", submittedAt));
+    } else {
+      const planned = this.planQuestion(session, context, actorId, submittedAt);
+      nextQuestion = planned.question;
+      nextSession = planned.session;
+      events.push(planned.event);
+    }
+    const result: SubmittedVoiceResponse = Object.freeze({ session: nextSession, response, nextQuestion, transcript: voiceTranscript });
+    try {
+      return this.repository.commitVoiceResponse({
+        transcript: voiceTranscript, response, session: nextSession, nextQuestion, events,
+        idempotencyScope: scope, idempotencyFingerprint: fingerprint, result,
+      });
+    } catch (error) {
+      if (error instanceof IdempotencyConflictError) throw new SessionError(error.code, error.message);
+      if (error instanceof Error && error.message.includes("canonical response")) {
+        throw new SessionError("CONFLICT", "This question already has a canonical response.");
+      }
+      throw error;
+    }
+  }
+
+  /** Trusted bridge used by the F07a credential/transport service. */
+  resolveVoiceSession(actor: Actor, sessionId: string, questionId?: string) {
+    const session = this.requireOwnedSession(actor, sessionId);
+    if (questionId !== undefined) {
+      const question = this.requireQuestion(questionId);
+      if (question.session_id !== session.id || question.submission_id !== session.submission_id) throw this.notFound();
+    }
+    const context = this.requireContext(session.id);
+    return Object.freeze({
+      sessionId: session.id,
+      submissionId: session.submission_id,
+      state: session.state,
+      voiceCheckInEnabled: context.voiceCheckInEnabled,
+      startedAt: session.started_at,
+    });
+  }
+
   submitTextResponse(actor: Actor, input: SubmitTextResponseInput): SubmittedResponse {
     this.assertAllowedKeys(input, "submitTextResponse", ["sessionId", "questionId", "canonicalText", "editedText", "idempotencyKey"]);
     const session = this.requireOwnedSession(actor, input.sessionId);
@@ -297,6 +383,15 @@ export class TextCheckInSessionService {
   }
 
   private issueQuestion(session: CheckInSession, context: SessionContext, actorId: string): Question {
+    const planned = this.planQuestion(session, context, actorId, this.now());
+    this.repository.saveQuestion(planned.question);
+    this.repository.saveSession(planned.session);
+    this.repository.saveEvent(planned.event);
+    return planned.question;
+  }
+
+  /** Builds, but does not persist, the next finite-budget question. */
+  private planQuestion(session: CheckInSession, context: SessionContext, actorId: string, occurredAt: string) {
     const sequence = session.questions_asked + 1;
     if (sequence > session.question_budget) throw new SessionError("INVALID_STATE", "The finite question budget has been reached.");
     const objective = context.objectives[(sequence - 1) % context.objectives.length]!;
@@ -312,12 +407,14 @@ export class TextCheckInSessionService {
       kind,
       rationale: `This deterministic question invites you to show your thinking about the approved objective: ${objective.label}.`,
       source_refs: sources,
-      created_at: this.now(),
+      created_at: occurredAt,
     });
-    this.repository.saveQuestion(question);
-    const withQuestion = this.saveSession({ ...session, questions_asked: sequence });
-    this.recordEvent(withQuestion, actorId, "question_issued", withQuestion.state, withQuestion.state, question.created_at);
-    return question;
+    const nextSession = CheckInSessionSchema.parse({ ...session, questions_asked: sequence });
+    return Object.freeze({
+      question,
+      session: nextSession,
+      event: this.newEvent(nextSession, actorId, "question_issued", nextSession.state, nextSession.state, occurredAt),
+    });
   }
 
   private saveSession(candidate: CheckInSession): CheckInSession {
@@ -334,16 +431,27 @@ export class TextCheckInSessionService {
     newState: CheckInSession["state"] | null,
     occurredAt: string,
   ): void {
-    this.repository.saveEvent(Object.freeze({
+    this.repository.saveEvent(this.newEvent(session, actorId, action, priorState, newState, occurredAt));
+  }
+
+  private newEvent(
+    session: CheckInSession,
+    actorId: string,
+    action: SessionTimelineEvent["action"],
+    priorState: CheckInSession["state"] | null,
+    newState: CheckInSession["state"] | null,
+    occurredAt: string,
+  ): SessionTimelineEvent {
+    return Object.freeze({
       id: this.id(), sessionId: session.id, actorId, action, priorState, newState,
       policyVersionId: session.policy_version_id, correlationId: this.id(), occurredAt,
-    }));
+    });
   }
 
   private normalizeResolvedContext(input: ResolvedTextCheckInContext, actorId: string, submissionId: string) {
     this.assertAllowedKeys(input, "resolvedContext", [
       "submissionId", "learnerId", "submissionCourseId", "assessmentCourseId", "submissionState", "assessmentVersionId", "assessmentVersionState",
-      "policyVersionId", "policy", "questionBudget", "timeBudgetMinutes", "pauseAndResume", "objectives",
+      "policyVersionId", "policy", "questionBudget", "timeBudgetMinutes", "pauseAndResume", "voiceCheckInEnabled", "objectives",
       "objectiveFragmentIds", "fragments",
     ]);
     if (input.submissionId !== submissionId || input.learnerId !== actorId) throw this.notFound();
@@ -406,6 +514,7 @@ export class TextCheckInSessionService {
       throw this.invalid("resolvedContext.policy.aiUsePolicy is invalid.");
     }
     if (typeof input.pauseAndResume !== "boolean") throw this.invalid("pauseAndResume must be true or false.");
+    if (typeof input.voiceCheckInEnabled !== "boolean") throw this.invalid("voiceCheckInEnabled must be true or false.");
     return {
       submissionId,
       assessmentVersionId,
@@ -420,6 +529,7 @@ export class TextCheckInSessionService {
         completionCriteria: this.requireText(policy.completionCriteria, "resolvedContext.policy.completionCriteria"),
       },
       pauseAndResume: input.pauseAndResume,
+      voiceCheckInEnabled: input.voiceCheckInEnabled,
       objectives: normalizedObjectives,
       objectiveSources: normalizedSources,
     };

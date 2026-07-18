@@ -1,6 +1,6 @@
-import type { CheckInSession, Question, Response } from "@evidence-loop/contracts/v1";
+import type { CheckInSession, Question, Response, SourceRef } from "@evidence-loop/contracts/v1";
 
-import type { SessionContext, SessionEventAction, SessionRepository, SessionTimelineEvent } from "./types.ts";
+import type { SessionContext, SessionEventAction, SessionRepository, SessionTimelineEvent, SubmittedVoiceResponse, VoiceResponseCommit, VoiceTranscript } from "./types.ts";
 
 const clone = <T>(value: T): T => structuredClone(value);
 
@@ -24,6 +24,7 @@ export class InMemorySessionRepository implements SessionRepository {
   #contexts = new Map<string, SessionContext>();
   #questions = new Map<string, Question>();
   #responsesByQuestion = new Map<string, Response>();
+  #voiceTranscriptsByResponse = new Map<string, VoiceTranscript>();
   #events = new Map<string, SessionTimelineEvent[]>();
   #idempotency = new Map<string, StoredIdempotentResult>();
 
@@ -81,6 +82,60 @@ export class InMemorySessionRepository implements SessionRepository {
       .filter((response) => response.session_id === sessionId)
       .sort((left, right) => left.submitted_at.localeCompare(right.submitted_at))
       .map((response) => immutable(response));
+  }
+
+  /**
+   * In-memory equivalent of the production transaction. Every validation is
+   * completed before mutating any map; durable adapters must use one database
+   * transaction with unique response/question and idempotency constraints.
+   */
+  commitVoiceResponse(commit: VoiceResponseCommit): SubmittedVoiceResponse {
+    const prior = this.#idempotency.get(commit.idempotencyScope);
+    if (prior) {
+      if (prior.fingerprint !== commit.idempotencyFingerprint) throw new IdempotencyConflictError();
+      return immutable(prior.result) as SubmittedVoiceResponse;
+    }
+    if (this.#responsesByQuestion.has(commit.response.question_id)) {
+      throw new Error("A question already has a canonical response.");
+    }
+    if (this.#voiceTranscriptsByResponse.has(commit.transcript.responseId)) {
+      throw new Error("A canonical response already has a voice transcript.");
+    }
+    if (commit.transcript.responseId !== commit.response.id || commit.transcript.questionId !== commit.response.question_id ||
+      commit.transcript.sessionId !== commit.response.session_id || commit.transcript.submissionId !== commit.response.submission_id ||
+      commit.transcript.canonicalText !== commit.response.canonical_text) {
+      throw new Error("Voice transcript and canonical response provenance must match.");
+    }
+    if (commit.nextQuestion && this.#questions.has(commit.nextQuestion.id)) throw new Error("Questions are immutable once issued.");
+    if (commit.session.id !== commit.response.session_id || commit.result.session.id !== commit.session.id ||
+      commit.result.response.id !== commit.response.id || commit.result.transcript.id !== commit.transcript.id) {
+      throw new Error("Voice transaction result must match its committed records.");
+    }
+
+    this.#voiceTranscriptsByResponse.set(commit.transcript.responseId, immutable(commit.transcript));
+    this.#responsesByQuestion.set(commit.response.question_id, immutable(commit.response));
+    this.#sessions.set(commit.session.id, immutable(commit.session));
+    if (commit.nextQuestion) this.#questions.set(commit.nextQuestion.id, immutable(commit.nextQuestion));
+    for (const event of commit.events) {
+      const current = this.#events.get(event.sessionId) ?? [];
+      this.#events.set(event.sessionId, [...current, immutable(event)]);
+    }
+    this.#idempotency.set(commit.idempotencyScope, immutable({
+      fingerprint: commit.idempotencyFingerprint,
+      result: commit.result,
+    }));
+    return immutable(commit.result) as SubmittedVoiceResponse;
+  }
+
+  getVoiceTranscriptForResponse(responseId: string): VoiceTranscript | undefined {
+    const transcript = this.#voiceTranscriptsByResponse.get(responseId);
+    return transcript && immutable(transcript);
+  }
+
+  getVoiceResponseSourceRef(responseId: string): SourceRef | undefined {
+    const response = [...this.#responsesByQuestion.values()].find((item) => item.id === responseId);
+    if (!response || response.modality !== "voice") return undefined;
+    return immutable({ source_type: "response", source_id: response.id, submission_id: response.submission_id, locator: `question:${response.question_id}` });
   }
 
   saveEvent(event: SessionTimelineEvent): void {

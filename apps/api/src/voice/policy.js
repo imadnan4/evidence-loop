@@ -9,6 +9,11 @@ export const VOICE_FALLBACK_REASONS = Object.freeze([
   "realtime_unavailable", "connection_failed", "microphone_unavailable", "credential_expired",
 ]);
 
+/** Learner-selected exits are not connection failures and must stay distinguishable in audit/state records. */
+export const VOICE_INTENTIONAL_EXIT_REASONS = Object.freeze([
+  "switch_to_text", "session_paused", "human_follow_up",
+]);
+
 export class VoicePolicyError extends Error {
   constructor(message, code = "voice_policy_violation") {
     super(message);
@@ -30,6 +35,13 @@ export function assertTranscript(text, field = "transcript") {
 export function assertFallbackReason(reason) {
   if (!VOICE_FALLBACK_REASONS.includes(reason)) {
     throw new VoicePolicyError("The voice connection state is not recognized.", "invalid_fallback_reason");
+  }
+  return reason;
+}
+
+export function assertIntentionalExitReason(reason) {
+  if (!VOICE_INTENTIONAL_EXIT_REASONS.includes(reason)) {
+    throw new VoicePolicyError("The requested voice exit is not recognized.", "invalid_voice_exit_reason");
   }
   return reason;
 }
