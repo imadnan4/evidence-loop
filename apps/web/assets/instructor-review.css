@@ -1,0 +1,110 @@
+.el-section-heading {
+  display: flex;
+  gap: var(--el-space-4);
+  align-items: end;
+  justify-content: space-between;
+}
+
+.el-section-note,
+.el-card-intro {
+  margin: 0;
+  color: var(--el-text-muted);
+}
+
+.el-section-note {
+  max-width: 34rem;
+  font-size: 0.875rem;
+  text-align: right;
+}
+
+.el-table-detail,
+.el-optional {
+  color: var(--el-text-muted);
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+.el-review-table td { min-width: 10rem; }
+.el-review-table td:first-child { min-width: 15rem; }
+.el-review-table tr[aria-current="true"] td { background: var(--el-accent-soft); }
+
+.el-evidence-stack { display: grid; gap: var(--el-space-4); }
+.el-evidence-section { display: grid; gap: var(--el-space-4); }
+.el-evidence-section__heading { display: flex; gap: var(--el-space-3); align-items: flex-start; }
+.el-evidence-section__heading p { margin: var(--el-space-1) 0 0; color: var(--el-text-muted); }
+
+.el-section-marker {
+  display: grid;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  color: var(--el-accent-strong);
+  background: var(--el-accent-soft);
+  border-radius: 50%;
+  font-weight: 800;
+  place-items: center;
+}
+.el-section-marker--positive { color: var(--el-success); background: var(--el-success-soft); }
+.el-section-marker--review { color: var(--el-amber); background: var(--el-amber-soft); }
+
+.el-claim-list {
+  display: grid;
+  gap: var(--el-space-4);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.el-claim-list li { padding-top: var(--el-space-4); border-top: 1px solid var(--el-border); }
+.el-claim-list li:first-child { padding-top: 0; border-top: 0; }
+.el-claim-objective { margin: 0; color: var(--el-accent-strong); font-size: 0.875rem; font-weight: 750; }
+.el-claim-text,
+.el-next-step { margin: var(--el-space-1) 0 0; }
+.el-uncertainty { margin: var(--el-space-3) 0 0; color: var(--el-text-muted); }
+.el-source-links { display: flex; flex-wrap: wrap; gap: var(--el-space-2); margin-top: var(--el-space-3); }
+
+.el-source-link {
+  padding: 0;
+  color: var(--el-accent-strong);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-align: left;
+}
+.el-source-link:hover { color: var(--el-accent); }
+
+.el-review-form { display: grid; gap: var(--el-space-5); }
+.el-review-form form { display: grid; gap: var(--el-space-4); }
+.el-review-actions { padding: 0; margin: 0; border: 0; }
+.el-review-actions legend { margin-bottom: var(--el-space-2); font-weight: 700; }
+.el-review-actions__options { display: flex; flex-wrap: wrap; gap: var(--el-space-2); }
+.el-review-actions__options label {
+  display: inline-flex;
+  gap: var(--el-space-2);
+  align-items: center;
+  min-height: 2.75rem;
+  padding: var(--el-space-2) var(--el-space-3);
+  background: var(--el-surface-subtle);
+  border: 1px solid var(--el-border);
+  border-radius: var(--el-radius-sm);
+  font-weight: 650;
+}
+.el-review-actions__options input { accent-color: var(--el-accent); }
+.el-review-form__footer { display: flex; flex-wrap: wrap; gap: var(--el-space-3); align-items: center; }
+.el-review-status { margin: 0; color: var(--el-text-muted); font-size: 0.875rem; }
+
+.el-source-dialog { max-height: min(42rem, calc(100% - 2rem)); }
+.el-source-id { margin: 0; color: var(--el-accent-strong); font-family: var(--el-font-mono); font-size: 0.8125rem; font-weight: 700; }
+.el-source-excerpt { padding: var(--el-space-3); margin: 0; background: var(--el-surface-subtle); border: 1px solid var(--el-border); border-radius: var(--el-radius-sm); }
+.el-source-excerpt figcaption { margin-bottom: var(--el-space-2); font-size: 0.8125rem; font-weight: 750; }
+.el-source-excerpt pre { max-width: 100%; padding: 0; margin: 0; overflow: auto; white-space: pre-wrap; }
+.el-source-excerpt code { font-family: var(--el-font-mono); font-size: 0.8125rem; }
+.el-source-note { padding: var(--el-space-3); margin: 0; background: var(--el-accent-soft); border-left: 3px solid var(--el-accent); border-radius: 0 var(--el-radius-sm) var(--el-radius-sm) 0; font-size: 0.875rem; }
+
+@media (max-width: 42rem) {
+  .el-section-heading { align-items: flex-start; flex-direction: column; }
+  .el-section-note { text-align: left; }
+  .el-review-form__footer { align-items: flex-start; flex-direction: column; }
+}
