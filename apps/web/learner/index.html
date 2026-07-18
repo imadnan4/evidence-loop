@@ -20,6 +20,7 @@
           <p class="el-breadcrumb"><a href="/">Evidence Loop</a> / Text check-in</p>
           <div id="checkin-status" class="el-visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
           <p id="checkin-error" class="el-inline-error" role="alert" tabindex="-1" hidden></p>
+          <p id="voice-notice" class="el-inline-notice" role="status" aria-live="polite" hidden></p>
 
           <section id="briefing-view" class="el-stack-lg" aria-labelledby="briefing-title">
             <div>
@@ -36,7 +37,7 @@
                 <div class="el-policy-item"><dt>Policy version</dt><dd id="policy-version">Loading…</dd></div>
                 <div class="el-policy-item"><dt>Privacy and retention</dt><dd id="privacy-summary">Loading…</dd></div>
                 <div class="el-policy-item"><dt>Completion</dt><dd id="completion-criteria">Loading…</dd></div>
-                <div class="el-policy-item"><dt>Assessment route</dt><dd>Typed responses. Voice is not required for this check-in.</dd></div>
+                <div class="el-policy-item"><dt>Assessment route</dt><dd>Typed responses are always available. If enabled for this assessment, voice is optional and its editable transcript—not audio—is retained here.</dd></div>
               </dl>
             </section>
 
@@ -70,13 +71,34 @@
                 <p class="el-question-label">Take your time. Use your own words and refer to your submitted work where helpful.</p>
                 <h1 id="question-heading" class="el-question-text" tabindex="-1"><span id="question-text"></span></h1>
               </div>
-              <div class="el-field">
+              <section id="voice-panel" class="el-voice-panel" aria-labelledby="voice-title" hidden>
+                <div class="el-voice-panel__heading">
+                  <div>
+                    <p class="el-eyebrow">Optional voice response</p>
+                    <h2 id="voice-title">Review and edit your transcript.</h2>
+                  </div>
+                  <span class="el-badge el-badge--info">Voice is optional</span>
+                </div>
+                <p id="voice-status" class="el-help" role="status" aria-live="polite" aria-atomic="true">Connecting your microphone…</p>
+                <div class="el-field">
+                  <label class="el-label" for="voice-transcript">Live transcript</label>
+                  <textarea id="voice-transcript" class="el-textarea" name="voice-transcript" aria-describedby="voice-transcript-help" spellcheck="true"></textarea>
+                  <p id="voice-transcript-help" class="el-help">Edit this text before continuing. The edited transcript is the assessment record; audio is not retained here.</p>
+                </div>
+                <div class="el-question-actions__secondary">
+                  <button id="toggle-voice-capture" class="el-button" type="button" disabled>Pause voice capture</button>
+                  <button id="replay-question" class="el-button el-button--quiet" type="button">Replay question aloud</button>
+                  <button id="switch-to-text" class="el-button el-button--quiet" type="button">Switch to text</button>
+                </div>
+              </section>
+              <div id="typed-response-field" class="el-field">
                 <label class="el-label" for="typed-response">Your typed response</label>
                 <textarea id="typed-response" class="el-textarea" name="typed-response" required aria-describedby="response-help" spellcheck="true"></textarea>
                 <p id="response-help" class="el-help">You can edit before you continue. A response is saved only when you select Continue.</p>
               </div>
               <div class="el-question-actions">
                 <div class="el-question-actions__secondary">
+                  <button id="enable-voice" class="el-button" type="button">Use voice for this response</button>
                   <button id="pause-checkin" class="el-button" type="button">Pause and save my place</button>
                   <button id="request-follow-up" class="el-button el-button--quiet" type="button">Request human follow-up</button>
                 </div>
