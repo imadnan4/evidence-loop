@@ -31,6 +31,7 @@ function trustedContext(overrides: Partial<ResolvedTextCheckInContext> = {}): Re
     questionBudget: 3,
     timeBudgetMinutes: 3,
     pauseAndResume: true,
+    voiceCheckInEnabled: true,
     objectives: [
       { id: "objective-prep", label: "data preparation", assessableInCheckIn: true, approvedBy: "instructor-1", approvedAt: "2026-07-17T12:00:00.000Z" },
       { id: "objective-leakage", label: "leakage and validation", assessableInCheckIn: true, approvedBy: "instructor-1", approvedAt: "2026-07-17T12:00:00.000Z" },

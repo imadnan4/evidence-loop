@@ -54,6 +54,8 @@ export type ResolvedTextCheckInContext = Readonly<{
   questionBudget: number;
   timeBudgetMinutes: number;
   pauseAndResume: boolean;
+  /** Immutable published accommodation; text remains available regardless. */
+  voiceCheckInEnabled: boolean;
   objectives: readonly ApprovedCheckInObjective[];
   objectiveFragmentIds: readonly Readonly<{ objectiveId: string; fragmentIds: readonly string[] }> [];
   fragments: readonly Readonly<{ id: string; submissionId: string; locator: string }> [];
@@ -69,6 +71,7 @@ export type SessionContext = Readonly<{
   policy: LearnerFacingPolicy;
   pauseAndResume: boolean;
   timeBudgetMinutes: number;
+  voiceCheckInEnabled: boolean;
   objectives: readonly CheckInObjective[];
   objectiveSources: readonly ObjectiveSources[];
   policyShownAt: string | null;
@@ -125,6 +128,37 @@ export type SubmitTextResponseInput = Readonly<{
   idempotencyKey: string;
 }>;
 
+/** Server-only voice transport input. Raw transcript is retained for learner correction/audit; edited text is canonical. */
+export type SubmitVoiceResponseInput = Readonly<{
+  sessionId: string;
+  questionId: string;
+  transcript: string;
+  editedTranscript: string | null;
+  idempotencyKey: string;
+}>;
+
+export type VoiceTranscript = Readonly<{
+  id: string;
+  responseId: string;
+  sessionId: string;
+  submissionId: string;
+  questionId: string;
+  modality: "voice";
+  transcript: string;
+  editedTranscript: string | null;
+  canonicalText: string;
+  createdAt: string;
+  submittedAt: string;
+}>;
+
+export type ResolvedVoiceSession = Readonly<{
+  sessionId: string;
+  submissionId: string;
+  state: CheckInSession["state"];
+  voiceCheckInEnabled: boolean;
+  startedAt: string | null;
+}>;
+
 export type StartedSession = Readonly<{
   session: CheckInSession;
   question: Question;
@@ -134,6 +168,21 @@ export type SubmittedResponse = Readonly<{
   session: CheckInSession;
   response: Response;
   nextQuestion: Question | null;
+}>;
+
+export type SubmittedVoiceResponse = SubmittedResponse & Readonly<{
+  transcript: VoiceTranscript;
+}>;
+
+export type VoiceResponseCommit = Readonly<{
+  transcript: VoiceTranscript;
+  response: Response;
+  session: CheckInSession;
+  nextQuestion: Question | null;
+  events: readonly SessionTimelineEvent[];
+  idempotencyScope: string;
+  idempotencyFingerprint: string;
+  result: SubmittedVoiceResponse;
 }>;
 
 export type CheckInReceipt = Readonly<{
@@ -155,6 +204,10 @@ export interface SessionRepository {
   saveResponse(response: Response): void;
   getResponseForQuestion(questionId: string): Response | undefined;
   listResponses(sessionId: string): readonly Response[];
+  /** One transaction: raw transcript, canonical voice response, state/audit changes, and retry result. */
+  commitVoiceResponse(commit: VoiceResponseCommit): SubmittedVoiceResponse;
+  getVoiceTranscriptForResponse(responseId: string): VoiceTranscript | undefined;
+  getVoiceResponseSourceRef(responseId: string): SourceRef | undefined;
   saveEvent(event: SessionTimelineEvent): void;
   listEvents(sessionId: string): readonly SessionTimelineEvent[];
   getIdempotentResult<T>(scope: string, fingerprint: string): T | undefined;
