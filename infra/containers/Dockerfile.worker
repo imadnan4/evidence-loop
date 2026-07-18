@@ -1,0 +1,7 @@
+FROM node:24.12.0-bookworm-slim
+
+WORKDIR /app
+COPY --chown=node:node pnpm-lock.yaml package.json ./
+COPY --chown=node:node infra/runtime ./infra/runtime
+USER node
+CMD ["node", "infra/runtime/worker-platform-probe.mjs"]
