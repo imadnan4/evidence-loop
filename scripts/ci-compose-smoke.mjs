@@ -79,7 +79,7 @@ function compose(args, inherit = true) {
     child.once("error", (error) => reject(new Error(`docker compose could not start: ${error.code ?? "unknown-error"}`)));
     child.once("exit", (code) => {
       if (code === 0) resolve(output);
-      else reject(new Error(`docker compose ${args[0] ?? "command"} failed (${code ?? "unknown"}): ${redact(output).slice(0, 500)}`));
+      else reject(new Error(`docker compose ${args[0] ?? "command"} failed (${code ?? "unknown"}): ${redact(output).slice(0, 5000)}`));
     });
   });
 }
@@ -106,7 +106,7 @@ function run(command, args, environment = {}) {
     child.once("error", (error) => reject(new Error(`${command} could not start: ${error.code ?? "unknown-error"}`)));
     child.once("exit", (code) => code === 0
       ? resolve()
-      : reject(new Error(`${command} ${args.join(" ")} failed (${code ?? "unknown"}): ${redact(output).slice(0, 500)}`)));
+      : reject(new Error(`${command} ${args.join(" ")} failed (${code ?? "unknown"}): ${redact(output).slice(0, 5000)}`)));
   });
 }
 

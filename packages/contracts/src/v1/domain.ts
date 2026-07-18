@@ -209,8 +209,8 @@ function parseRubricCriterion(input: unknown, path: string): RubricCriterion {
 
 function parseAssessmentPolicy(input: unknown, path: string): AssessmentPolicy {
   const object = strictObject(input, path, ["policy_text", "ai_use_policy", "accommodations", "retention_summary"]);
-  const accommodations = array(required(object, "accommodations", path), `${path}.accommodations`, (value, itemPath) =>
-    enumValue(value, itemPath, ["text", "extended_time", "human_follow_up"])
+  const accommodations: AssessmentPolicy["accommodations"] = array(required(object, "accommodations", path), `${path}.accommodations`, (value, itemPath) =>
+    enumValue(value, itemPath, ["text", "extended_time", "human_follow_up"] as const)
   );
   if (!accommodations.includes("text")) {
     invalidValue(`${path}.accommodations`, "Assessment policy must provide the equivalent typed-response route.");
