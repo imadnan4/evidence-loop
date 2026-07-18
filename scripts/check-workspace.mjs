@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 const commands = [
   ["pnpm", ["--filter", "@evidence-loop/contracts", "check"]],
   ["pnpm", ["--filter", "@evidence-loop/config", "check"]],
+  ["pnpm", ["--filter", "@evidence-loop/db", "check"]],
   ["pnpm", ["--filter", "@evidence-loop/api", "check"]],
   ["pnpm", ["--filter", "@evidence-loop/web-shell", "check"]],
   ["pnpm", ["--filter", "@evidence-loop/ui", "check"]],
@@ -17,4 +18,4 @@ for (const [command, args] of commands) {
   });
 }
 
-console.log("Workspace checks passed, including apps/api/tests/session-state-machine.test.ts.");
+console.log("Workspace checks passed, including database package unit checks and apps/api/tests/session-state-machine.test.ts.");

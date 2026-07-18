@@ -73,6 +73,19 @@ async function eventually(operation) {
   throw lastError;
 }
 
+function run(command, args, environment = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env: { ...process.env, ...environment }, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { output += chunk; });
+    child.once("error", (error) => reject(new Error(`${command} could not start: ${error.code ?? "unknown-error"}`)));
+    child.once("exit", (code) => code === 0
+      ? resolve()
+      : reject(new Error(`${command} ${args.join(" ")} failed (${code ?? "unknown"}): ${redact(output).slice(0, 500)}`)));
+  });
+}
+
 let primaryFailure;
 try {
   // Do not use the checked-in local environment: this stack receives credentials
@@ -83,7 +96,18 @@ try {
     'mc alias set smoke http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls smoke && mc alias set anonymous http://minio:9000 >/dev/null && for bucket in "$S3_BUCKET_QUARANTINE" "$S3_BUCKET_CLEAN" "$S3_BUCKET_DERIVED"; do printf "synthetic-smoke" | mc pipe "smoke/$bucket/access-probe" >/dev/null && ! mc ls "anonymous/$bucket" >/dev/null 2>&1 && ! mc cat "anonymous/$bucket/access-probe" >/dev/null 2>&1; done',
   ], false));
   for (const bucket of ["quarantine", "clean", "derived"]) assert.match(buckets, new RegExp(`\\b${bucket}\\b`));
-  console.log("Compose smoke passed: dependencies healthy, private buckets provisioned, and anonymous listing/read access denied for every object zone.");
+  await eventually(() => compose(["exec", "-T", "postgres", "pg_isready", "-U", "evidence_loop", "-d", "evidence_loop"], false));
+  // Run the PostgreSQL suite inside the private Compose network. This avoids
+  // exposing CI credentials through a host process or relying on host-port access.
+  await run("docker", [
+    "run", "--rm", "--network", `${projectName}_platform`,
+    "--mount", `type=bind,source=${process.cwd()},target=/workspace`,
+    "--workdir", "/workspace",
+    "--env", `DATABASE_URL=postgresql://evidence_loop:${postgresPassword}@postgres:5432/evidence_loop`,
+    "node:24.12.0-bookworm-slim",
+    "node", "--test", "packages/db/test/database.integration.ts",
+  ]);
+  console.log("Compose smoke passed: dependencies healthy, private buckets provisioned, anonymous listing/read access denied for every object zone, and PostgreSQL migration/RLS integration tests passed.");
 } catch (error) {
   primaryFailure = error;
   throw error;
