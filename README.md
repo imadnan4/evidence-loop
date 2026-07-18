@@ -100,9 +100,9 @@ All visible people, artifacts, notebook excerpts, responses, and timestamps in t
 
 ## Project status
 
-The workspace is an in-progress, test-backed prototype rather than a production service. F07a and F07b are independently reviewed. The web shell and instructor review use synthetic data, and the instructor action is deliberately local-only. The release smoke check covers static demo availability; package checks cover the API, contracts, UI system, and browser flows.
+The scoped F00–F08 project is complete: its implementation and release-hardening gates are reviewed, and the repository includes the synthetic-demo documentation and release smoke check. Package checks cover the API, contracts, UI system, and browser flows; the release smoke check covers static demo availability and basic HTTP boundaries.
 
-A complete deployed instructor → learner → instructor loop remains blocked on a real HTTP BFF, authenticated course/session setup, durable storage, and deployment configuration. Production concerns described in planning materials—such as identity integration, retention controls, provider data controls, operational storage, and legal/institutional review—are not implemented or claimed here.
+This completed scope is a test-backed prototype and synthetic demo, not a production service. A deployed instructor → learner → instructor runtime—with an HTTP BFF, authenticated course/session setup, durable storage, and deployment configuration—is intentionally outside scope. Production concerns such as identity integration, retention controls, provider data controls, operational storage, and legal/institutional review are not implemented or claimed here.
 
 ## Development workflow
 
