@@ -1,0 +1,155 @@
+import { createHash } from "node:crypto";
+import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
+import Fastify, { type FastifyRequest } from "fastify";
+import pino, { type DestinationStream } from "pino";
+import type { Sql } from "postgres";
+import { bearerToken, AuthenticationError, createTokenVerifier } from "../auth/oidc-jwt.ts";
+import { courseRole, resolvePrincipal, UnknownPrincipalError, type Principal } from "../auth/principal.ts";
+import type { ServerEnvironment } from "@evidence-loop/config";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEFAULT_RATE_LIMIT = Object.freeze({ max: 100, timeWindow: "1 minute" });
+
+type TokenVerifier = ReturnType<typeof createTokenVerifier>;
+type RateLimitSettings = Readonly<{ max: number; timeWindow: string | number }>;
+type Dependencies = Readonly<{
+  environment: ServerEnvironment;
+  client: Sql<{}>;
+  verifyToken?: TokenVerifier;
+  rateLimit?: RateLimitSettings;
+  loggerStream?: DestinationStream;
+}>;
+type CourseParams = Readonly<{ courseId: string }>;
+
+function stableRateLimitKey(request: FastifyRequest): string {
+  const authorization = request.headers.authorization;
+  if (typeof authorization === "string" && authorization.length > 0) {
+    // The store receives a one-way bounded key, never a bearer token.
+    return `token:${createHash("sha256").update(authorization).digest("base64url")}`;
+  }
+  // trustProxy is false, so this is the direct socket address, not an X-Forwarded-For value.
+  return `ip:${request.ip}`;
+}
+
+function errorBody(code: string, message: string) {
+  return { error: { code, message } };
+}
+
+export function buildApp({
+  environment,
+  client,
+  verifyToken = createTokenVerifier(environment.oidc),
+  rateLimit: rateLimitSettings = DEFAULT_RATE_LIMIT,
+  loggerStream,
+}: Dependencies) {
+  const allowedOrigins = new Set(environment.allowedWebOrigins.map((origin) => origin.origin));
+  // Request logs intentionally whitelist fields. In particular, paths, query strings,
+  // headers, request bodies, and provider errors are not telemetry until D03's redaction work.
+  const logger = pino({
+    level: "info",
+    serializers: {
+      req(request) {
+        return { method: request.method, remoteAddress: request.socket.remoteAddress };
+      },
+      res(response) {
+        return { statusCode: response.statusCode };
+      },
+    },
+  }, loggerStream);
+  const app = Fastify({ loggerInstance: logger, trustProxy: false });
+
+  app.register(cors, {
+    origin: (origin, callback) => callback(null, Boolean(origin && allowedOrigins.has(origin))),
+    credentials: false,
+  });
+  app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'none'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
+      },
+    },
+    hsts: environment.profile === "staging",
+  });
+  app.register(rateLimit, {
+    global: true,
+    max: rateLimitSettings.max,
+    timeWindow: rateLimitSettings.timeWindow,
+    keyGenerator: stableRateLimitKey,
+    errorResponseBuilder: () => ({
+      statusCode: 429,
+      code: "rate_limited",
+      message: "Too many requests. Try again later.",
+    }),
+  });
+
+  app.addHook("onSend", async (_request, reply, payload) => {
+    if (reply.getHeader("content-type")?.toString().includes("application/json")) {
+      reply.header("cache-control", "no-store");
+    }
+    return payload;
+  });
+  app.setErrorHandler(async (error, _request, reply) => {
+    if (error instanceof AuthenticationError || error instanceof UnknownPrincipalError) {
+      return reply.code(401).send(errorBody("unauthorized", "Authentication required."));
+    }
+    if (error.statusCode === 429 || error.code === "FST_ERR_RATE_LIMIT") {
+      return reply.code(429).send(errorBody("rate_limited", "Too many requests. Try again later."));
+    }
+    if (error.validation) {
+      return reply.code(400).send(errorBody("validation", "Invalid request."));
+    }
+    return reply.code(500).send(errorBody("internal", "Request failed."));
+  });
+
+  async function principal(request: FastifyRequest): Promise<Principal> {
+    const identity = await verifyToken(bearerToken(request.headers.authorization));
+    return resolvePrincipal(client, identity);
+  }
+
+  // Fastify plugins are encapsulated. Register routes only after rate-limit is loaded
+  // in this scope so the global limiter applies to every API and health endpoint.
+  app.after(() => {
+    app.setNotFoundHandler(async (_request, reply) => reply.code(404).send(errorBody("not_found", "Resource not found.")));
+    app.get("/health/live", async () => ({ status: "live" }));
+    app.get("/health/ready", async (_request, reply) => {
+      try {
+        await client`SELECT 1`;
+        return { status: "ready" };
+      } catch {
+        return reply.code(503).send({ status: "unavailable" });
+      }
+    });
+    app.get("/v1/me", async (request) => {
+      const current = await principal(request);
+      return { userId: current.userId, organizationId: current.organizationId };
+    });
+    app.get<{ Params: CourseParams }>("/v1/courses/:courseId/access", async (request, reply) => {
+      if (!UUID.test(request.params.courseId)) {
+        return reply.code(400).send(errorBody("validation", "Invalid course id."));
+      }
+      const current = await principal(request);
+      const role = await courseRole(client, current, request.params.courseId);
+      if (!role) return reply.code(404).send(errorBody("not_found", "Course not found."));
+      return { courseId: request.params.courseId, role };
+    });
+    app.get<{ Params: CourseParams }>("/v1/courses/:courseId/instructor-access", async (request, reply) => {
+      if (!UUID.test(request.params.courseId)) {
+        return reply.code(400).send(errorBody("validation", "Invalid course id."));
+      }
+      const current = await principal(request);
+      const role = await courseRole(client, current, request.params.courseId);
+      if (role !== "instructor" && role !== "course_admin") {
+        return reply.code(404).send(errorBody("not_found", "Course not found."));
+      }
+      return { courseId: request.params.courseId, role };
+    });
+  });
+
+  return app;
+}

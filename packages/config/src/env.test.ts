@@ -14,6 +14,10 @@ const local = {
   S3_BUCKET_QUARANTINE: "quarantine",
   S3_BUCKET_CLEAN: "clean",
   S3_BUCKET_DERIVED: "derived",
+  OIDC_ISSUER: "http://127.0.0.1:9100",
+  OIDC_JWKS_URI: "http://127.0.0.1:9100/jwks",
+  OIDC_AUDIENCE: "evidence-loop-api",
+  OIDC_ORGANIZATION_CLAIM: "https://evidence-loop.test/organization_id",
   ALLOWED_WEB_ORIGINS: "http://127.0.0.1:3000",
   DEPLOYMENT_ID: "local",
   RELEASE_VERSION: "dev",
@@ -45,22 +49,24 @@ test("rejects browser-public namespaces", () => {
   );
 });
 
-test("rejects a partial future integration configuration", () => {
+test("rejects client credentials in a resource-server configuration", () => {
   assert.throws(
-    () => parseServerEnvironment({ ...local, OPENAI_API_KEY: "not-a-real-key" }),
-    (error: unknown) => error instanceof EnvironmentError && error.variable === "OPENAI_MODEL" && error.code === "partial-integration-config",
+    () => parseServerEnvironment({ ...local, OIDC_CLIENT_SECRET: "not-a-real-secret" }),
+    (error: unknown) => error instanceof EnvironmentError && error.variable === "OIDC_CLIENT_SECRET" && error.code === "resource-server-does-not-use-client-credentials",
   );
 });
 
 test("staging rejects loopback object storage and placeholder credentials", () => {
   assert.throws(
-    () => parseServerEnvironment({ ...local, EVIDENCE_LOOP_ENV: "staging", ALLOWED_WEB_ORIGINS: "https://staging.example.test" }),
-    (error: unknown) => error instanceof EnvironmentError && error.variable === "DATABASE_URL" && error.code === "staging-loopback-not-allowed",
+    () => parseServerEnvironment({ ...local, EVIDENCE_LOOP_ENV: "staging", OIDC_ISSUER: "https://issuer.example.test", OIDC_JWKS_URI: "https://issuer.example.test/jwks", ALLOWED_WEB_ORIGINS: "https://staging.example.test" }),
+    (error: unknown) => error instanceof EnvironmentError && error.variable === "OIDC_ISSUER" && error.code === "staging-requires-https-non-loopback",
   );
   assert.throws(
     () => parseServerEnvironment({
       ...local,
       EVIDENCE_LOOP_ENV: "staging",
+      OIDC_ISSUER: "https://issuer.example.test",
+      OIDC_JWKS_URI: "https://issuer.example.test/jwks",
       DATABASE_URL: "postgresql://service:production-password@db.example.test:5432/evidence_loop",
       S3_ENDPOINT: "https://objects.example.test",
       S3_ACCESS_KEY_ID: "change-me",
