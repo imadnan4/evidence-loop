@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Sql, TransactionSql } from "postgres";
+import postgres, { type Sql, type TransactionSql } from "postgres";
 
 export type TenantTransactionContext = Readonly<{
   organizationId: string;
@@ -144,7 +144,7 @@ export async function writeWithAuditAndOutbox<T>(
     actorId: string | null;
     correlationId: string;
     audit: Readonly<{ action: string; targetType: string; targetId: string; metadata?: unknown }>;
-    outbox: Readonly<{ aggregateType: string; aggregateId: string; topic: string; payload: Record<string, unknown> }>;
+    outbox: Readonly<{ aggregateType: string; aggregateId: string; topic: string; payload: Record<string, postgres.JSONValue> }>;
     domainWrite: (transaction: TransactionSql) => Promise<T>;
   }>,
 ): Promise<T> {
@@ -152,9 +152,9 @@ export async function writeWithAuditAndOutbox<T>(
   const result = await input.domainWrite(transaction);
   await transaction`
     INSERT INTO audit_events (organization_id, actor_id, correlation_id, action, target_type, target_id, metadata)
-    VALUES (${input.organizationId}, ${input.actorId}, ${input.correlationId}, ${input.audit.action}, ${input.audit.targetType}, ${input.audit.targetId}, ${JSON.stringify(metadata)}::jsonb)`;
+    VALUES (${input.organizationId}, ${input.actorId}, ${input.correlationId}, ${input.audit.action}, ${input.audit.targetType}, ${input.audit.targetId}, ${transaction.json(metadata)})`;
   await transaction`
     INSERT INTO outbox_events (organization_id, aggregate_type, aggregate_id, topic, payload)
-    VALUES (${input.organizationId}, ${input.outbox.aggregateType}, ${input.outbox.aggregateId}, ${input.outbox.topic}, ${JSON.stringify(input.outbox.payload)}::jsonb)`;
+    VALUES (${input.organizationId}, ${input.outbox.aggregateType}, ${input.outbox.aggregateId}, ${input.outbox.topic}, ${transaction.json(input.outbox.payload)})`;
   return result;
 }

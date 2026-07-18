@@ -21,8 +21,13 @@ async function localDatabaseUrl(): Promise<string> {
     return index > 0 ? [[line.slice(0, index), line.slice(index + 1)]] : [];
   }));
   const value = variables.get("DATABASE_URL");
-  if (!value) throw new Error("DATABASE_URL is required; generate infra/env/.env.local or set it explicitly.");
-  return value;
+  if (value) return value;
+  const user = variables.get("POSTGRES_USER");
+  const password = variables.get("POSTGRES_PASSWORD");
+  const database = variables.get("POSTGRES_DB");
+  const port = variables.get("POSTGRES_PORT") ?? "5432";
+  if (!user || !password || !database) throw new Error("DATABASE_URL is required; generate infra/env/.env.local or set it explicitly.");
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@127.0.0.1:${port}/${encodeURIComponent(database)}`;
 }
 
 function testDatabaseUrl(url: string, database: string, user?: string, password?: string): string {
@@ -74,14 +79,16 @@ test.before(async () => {
   try {
     const concurrent = await Promise.all([applyMigrations(concurrentA), applyMigrations(concurrentB)]);
     assert.equal(concurrent.filter((result) => result.applied.includes("0001_database_kernel.sql")).length, 1);
+    assert.equal(concurrent.filter((result) => result.applied.includes("0002_assessment_authoring.sql")).length, 1);
     assert.equal(concurrent.filter((result) => result.skipped.includes("0001_database_kernel.sql")).length, 1);
+    assert.equal(concurrent.filter((result) => result.skipped.includes("0002_assessment_authoring.sql")).length, 1);
   } finally {
     await concurrentA.end({ timeout: 2 });
     await concurrentB.end({ timeout: 2 });
   }
   const rerun = await applyMigrations(migrator);
   assert.deepEqual(rerun.applied, []);
-  assert.deepEqual(rerun.skipped, ["0001_database_kernel.sql"]);
+  assert.deepEqual(rerun.skipped, ["0001_database_kernel.sql", "0002_assessment_authoring.sql"]);
 
   await migrator.unsafe(`CREATE ROLE ${applicationRole} LOGIN PASSWORD '${applicationPassword}' NOINHERIT`);
   await migrator.unsafe(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
@@ -115,7 +122,7 @@ test.after(async () => {
   await application?.end({ timeout: 2 });
   await admin?.unsafe(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
   await admin?.end({ timeout: 2 });
-  await rm(migrationDirectory, { recursive: true, force: true });
+  if (migrationDirectory) await rm(migrationDirectory, { recursive: true, force: true });
 });
 
 test("RLS fails closed without context and denies cross-tenant reads and writes", async () => {
@@ -172,6 +179,131 @@ test("idempotency keys replay only an identical fingerprint, including concurren
     appTransaction(organizationA, (transaction) => reserveIdempotencyKey(transaction, { organizationId: organizationA, operation: "course.create", key: concurrentKey, requestFingerprint: fingerprint })),
   ]);
   assert.deepEqual(results.sort(), ["created", "replayed"]);
+});
+
+test("published assessment snapshot children cannot be reparented into a draft", async () => {
+  const assessmentId = randomUUID();
+  const publishedVersionId = randomUUID();
+  const draftVersionId = randomUUID();
+  const publishedObjectiveId = randomUUID();
+  const draftObjectiveId = randomUUID();
+  const publishedCriterionId = randomUUID();
+  const draftCriterionId = randomUUID();
+
+  await appTransaction(organizationA, async (transaction) => {
+    await transaction`
+      INSERT INTO assessments (id, organization_id, course_id, title)
+      VALUES (${assessmentId}, ${organizationA}, ${courseA}, 'Snapshot assessment')`;
+    await transaction`
+      INSERT INTO assessment_versions (
+        id, organization_id, course_id, assessment_id, version_number, title,
+        assignment_instructions, learner_facing_text, ai_use_policy, privacy_summary,
+        completion_criteria, text_check_in, voice_check_in, extra_time,
+        pause_and_resume, alternative_assessment_request, question_budget,
+        time_budget_minutes, created_by
+      ) VALUES (
+        ${publishedVersionId}, ${organizationA}, ${courseA}, ${assessmentId}, 1, 'Published snapshot',
+        'Synthetic instructions.', 'Synthetic policy.', 'allowed', 'Synthetic privacy.',
+        'Synthetic completion.', true, false, false, true, true, 3, 3, ${userA}
+      )`;
+    await transaction`
+      INSERT INTO assessment_objectives (
+        id, organization_id, assessment_id, assessment_version_id, position,
+        label, description, evidence_criteria, assessable_in_check_in, approved_by
+      ) VALUES (
+        ${publishedObjectiveId}, ${organizationA}, ${assessmentId}, ${publishedVersionId}, 1,
+        'Published objective', 'Synthetic description.', 'Synthetic evidence.', true, ${userA}
+      )`;
+    await transaction`
+      INSERT INTO rubric_criteria (
+        id, organization_id, assessment_id, assessment_version_id, position,
+        label, description, evidence_criteria
+      ) VALUES (
+        ${publishedCriterionId}, ${organizationA}, ${assessmentId}, ${publishedVersionId}, 1,
+        'Published criterion', 'Synthetic description.', 'Synthetic evidence.'
+      )`;
+    await transaction`
+      INSERT INTO rubric_criterion_objectives (
+        organization_id, assessment_version_id, criterion_id, objective_id
+      ) VALUES (${organizationA}, ${publishedVersionId}, ${publishedCriterionId}, ${publishedObjectiveId})`;
+    await transaction`
+      UPDATE assessment_versions
+      SET state = 'published', published_by = ${userA}, published_at = now()
+      WHERE id = ${publishedVersionId}`;
+    await transaction`
+      UPDATE assessments
+      SET state = 'published', current_published_version_id = ${publishedVersionId}
+      WHERE id = ${assessmentId}`;
+
+    await transaction`
+      INSERT INTO assessment_versions (
+        id, organization_id, course_id, assessment_id, version_number, title,
+        assignment_instructions, learner_facing_text, ai_use_policy, privacy_summary,
+        completion_criteria, text_check_in, voice_check_in, extra_time,
+        pause_and_resume, alternative_assessment_request, question_budget,
+        time_budget_minutes, created_by
+      ) VALUES (
+        ${draftVersionId}, ${organizationA}, ${courseA}, ${assessmentId}, 2, 'Mutable draft',
+        'Synthetic instructions.', 'Synthetic policy.', 'allowed', 'Synthetic privacy.',
+        'Synthetic completion.', true, false, false, true, true, 3, 3, ${userA}
+      )`;
+    await transaction`
+      INSERT INTO assessment_objectives (
+        id, organization_id, assessment_id, assessment_version_id, position,
+        label, description, evidence_criteria, assessable_in_check_in, approved_by
+      ) VALUES (
+        ${draftObjectiveId}, ${organizationA}, ${assessmentId}, ${draftVersionId}, 1,
+        'Draft objective', 'Synthetic description.', 'Synthetic evidence.', true, ${userA}
+      )`;
+    await transaction`
+      INSERT INTO rubric_criteria (
+        id, organization_id, assessment_id, assessment_version_id, position,
+        label, description, evidence_criteria
+      ) VALUES (
+        ${draftCriterionId}, ${organizationA}, ${assessmentId}, ${draftVersionId}, 1,
+        'Draft criterion', 'Synthetic description.', 'Synthetic evidence.'
+      )`;
+  });
+
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`
+      UPDATE assessment_objectives
+      SET assessment_version_id = ${draftVersionId}
+      WHERE id = ${publishedObjectiveId}`),
+    /assessment version parent is immutable/,
+  );
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`
+      UPDATE rubric_criteria
+      SET assessment_version_id = ${draftVersionId}
+      WHERE id = ${publishedCriterionId}`),
+    /assessment version parent is immutable/,
+  );
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`
+      UPDATE rubric_criterion_objectives
+      SET assessment_version_id = ${draftVersionId}, criterion_id = ${draftCriterionId}, objective_id = ${draftObjectiveId}
+      WHERE assessment_version_id = ${publishedVersionId}
+        AND criterion_id = ${publishedCriterionId}
+        AND objective_id = ${publishedObjectiveId}`),
+    /assessment version parent is immutable/,
+  );
+
+  await appTransaction(organizationA, async (transaction) => {
+    const objective = await transaction<{ assessment_version_id: string; label: string }[]>`
+      SELECT assessment_version_id, label FROM assessment_objectives WHERE id = ${publishedObjectiveId}`;
+    const criterion = await transaction<{ assessment_version_id: string; label: string }[]>`
+      SELECT assessment_version_id, label FROM rubric_criteria WHERE id = ${publishedCriterionId}`;
+    const mapping = await transaction<{ assessment_version_id: string; criterion_id: string; objective_id: string }[]>`
+      SELECT assessment_version_id, criterion_id, objective_id
+      FROM rubric_criterion_objectives
+      WHERE assessment_version_id = ${publishedVersionId}
+        AND criterion_id = ${publishedCriterionId}
+        AND objective_id = ${publishedObjectiveId}`;
+    assert.deepEqual(Array.from(objective), [{ assessment_version_id: publishedVersionId, label: 'Published objective' }]);
+    assert.deepEqual(Array.from(criterion), [{ assessment_version_id: publishedVersionId, label: 'Published criterion' }]);
+    assert.deepEqual(Array.from(mapping), [{ assessment_version_id: publishedVersionId, criterion_id: publishedCriterionId, objective_id: publishedObjectiveId }]);
+  });
 });
 
 test("domain, audit, and outbox writes roll back together, including rejected audit metadata", async () => {

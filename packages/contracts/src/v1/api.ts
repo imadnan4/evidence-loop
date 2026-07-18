@@ -1,5 +1,7 @@
 import {
   array,
+  boolean,
+  integer,
   defineSchema,
   enumValue,
   invalidValue,
@@ -11,7 +13,7 @@ import {
   type Schema,
   string
 } from "../schema.ts";
-import type { InstructorReview, ResponseModality } from "./domain.ts";
+import type { InstructorReview, ResponseModality, AiUsePolicy } from "./domain.ts";
 
 export interface ApiSuccess<T> {
   contract_version: "v1";
@@ -194,3 +196,41 @@ export const ApiErrorEnvelopeSchema: Schema<ApiErrorEnvelope> = defineSchema(par
 export function success<T>(request_id: string, data: T): ApiSuccess<T> {
   return { contract_version: "v1", request_id: opaqueId(request_id, "$.request_id"), data };
 }
+
+export interface DurableObjectiveInput { id: string; label: string; description: string; evidence_criteria: string; assessable_in_check_in: boolean; }
+export interface DurableRubricInput { label: string; description: string; evidence_criteria: string; objective_ids: string[]; }
+export interface CreateAssessmentDraftRequest {
+  title: string; assignment_instructions: string; objectives: DurableObjectiveInput[]; rubric: DurableRubricInput[];
+  policy: { learner_facing_text: string; ai_use_policy: AiUsePolicy; privacy_summary: string; completion_criteria: string };
+  accommodations: { text_check_in: boolean; voice_check_in: boolean; extra_time: boolean; pause_and_resume: boolean; alternative_assessment_request: boolean };
+  question_budget: number; time_budget_minutes: number;
+}
+function parseDurableObjective(input: unknown, path: string): DurableObjectiveInput {
+  const o = strictObject(input, path, ["id", "label", "description", "evidence_criteria", "assessable_in_check_in"]);
+  return { id: opaqueId(required(o,"id",path),`${path}.id`), label: nonEmptyString(required(o,"label",path),`${path}.label`), description: nonEmptyString(required(o,"description",path),`${path}.description`), evidence_criteria: nonEmptyString(required(o,"evidence_criteria",path),`${path}.evidence_criteria`), assessable_in_check_in: boolean(required(o,"assessable_in_check_in",path),`${path}.assessable_in_check_in`) };
+}
+function parseDurableRubric(input: unknown, path: string): DurableRubricInput {
+  const o = strictObject(input, path, ["label", "description", "evidence_criteria", "objective_ids"]);
+  const objective_ids = array(required(o,"objective_ids",path),`${path}.objective_ids`,opaqueId);
+  if (!objective_ids.length) invalidValue(`${path}.objective_ids`, "Each rubric criterion needs an explicit objective mapping.");
+  return { label: nonEmptyString(required(o,"label",path),`${path}.label`), description: nonEmptyString(required(o,"description",path),`${path}.description`), evidence_criteria: nonEmptyString(required(o,"evidence_criteria",path),`${path}.evidence_criteria`), objective_ids };
+}
+function parseCreateAssessmentDraft(input: unknown, path: string): CreateAssessmentDraftRequest {
+  const o = strictObject(input,path,["title","assignment_instructions","objectives","rubric","policy","accommodations","question_budget","time_budget_minutes"]);
+  const objectives = array(required(o,"objectives",path),`${path}.objectives`,parseDurableObjective);
+  const rubric = array(required(o,"rubric",path),`${path}.rubric`,parseDurableRubric);
+  if (objectives.length < 1 || objectives.length > 10) invalidValue(`${path}.objectives`, "Expected 1 to 10 objectives.");
+  if (rubric.length < 1 || rubric.length > 12) invalidValue(`${path}.rubric`, "Expected 1 to 12 rubric criteria.");
+  if (new Set(objectives.map(x=>x.id)).size !== objectives.length) invalidValue(`${path}.objectives`, "Objective ids must be unique.");
+  const ids = new Set(objectives.map(x=>x.id));
+  if (rubric.some(x => x.objective_ids.some(id => !ids.has(id)))) invalidValue(`${path}.rubric`, "Rubric mappings must reference supplied objectives.");
+  const policy = strictObject(required(o,"policy",path),`${path}.policy`,["learner_facing_text","ai_use_policy","privacy_summary","completion_criteria"]);
+  const accommodations = strictObject(required(o,"accommodations",path),`${path}.accommodations`,["text_check_in","voice_check_in","extra_time","pause_and_resume","alternative_assessment_request"]);
+  const text_check_in = boolean(required(accommodations,"text_check_in",`${path}.accommodations`),`${path}.accommodations.text_check_in`);
+  if (!text_check_in) invalidValue(`${path}.accommodations.text_check_in`, "Typed check-in is required.");
+  return { title: nonEmptyString(required(o,"title",path),`${path}.title`), assignment_instructions: nonEmptyString(required(o,"assignment_instructions",path),`${path}.assignment_instructions`), objectives, rubric,
+    policy: { learner_facing_text: nonEmptyString(required(policy,"learner_facing_text",`${path}.policy`),`${path}.policy.learner_facing_text`), ai_use_policy: enumValue(required(policy,"ai_use_policy",`${path}.policy`),`${path}.policy.ai_use_policy`,["allowed","allowed_with_disclosure","not_allowed"]), privacy_summary: nonEmptyString(required(policy,"privacy_summary",`${path}.policy`),`${path}.policy.privacy_summary`), completion_criteria: nonEmptyString(required(policy,"completion_criteria",`${path}.policy`),`${path}.policy.completion_criteria`) },
+    accommodations: { text_check_in, voice_check_in: boolean(required(accommodations,"voice_check_in",`${path}.accommodations`),`${path}.accommodations.voice_check_in`), extra_time: boolean(required(accommodations,"extra_time",`${path}.accommodations`),`${path}.accommodations.extra_time`), pause_and_resume: boolean(required(accommodations,"pause_and_resume",`${path}.accommodations`),`${path}.accommodations.pause_and_resume`), alternative_assessment_request: boolean(required(accommodations,"alternative_assessment_request",`${path}.accommodations`),`${path}.accommodations.alternative_assessment_request`) },
+    question_budget: integer(required(o,"question_budget",path),`${path}.question_budget`,3,5), time_budget_minutes: integer(required(o,"time_budget_minutes",path),`${path}.time_budget_minutes`,3,8) };
+}
+export const CreateAssessmentDraftRequestSchema: Schema<CreateAssessmentDraftRequest> = defineSchema(parseCreateAssessmentDraft);

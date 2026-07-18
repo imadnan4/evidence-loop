@@ -11,6 +11,7 @@ COPY packages/db/src ./packages/db/src
 COPY apps/api/package.json apps/api/tsconfig.json ./apps/api/
 RUN corepack enable && pnpm install --frozen-lockfile --filter @evidence-loop/api...
 COPY apps/api/src/auth ./apps/api/src/auth
+COPY apps/api/src/assessment ./apps/api/src/assessment
 COPY apps/api/src/http ./apps/api/src/http
 COPY apps/api/src/main.ts ./apps/api/src/main.ts
 USER node

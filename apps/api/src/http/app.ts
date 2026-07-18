@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
-import Fastify, { type FastifyRequest } from "fastify";
+import Fastify, { type FastifyError, type FastifyRequest } from "fastify";
 import pino, { type DestinationStream } from "pino";
 import type { Sql } from "postgres";
 import { bearerToken, AuthenticationError, createTokenVerifier } from "../auth/oidc-jwt.ts";
 import { courseRole, resolvePrincipal, UnknownPrincipalError, type Principal } from "../auth/principal.ts";
 import type { ServerEnvironment } from "@evidence-loop/config";
+import { ContractValidationError, CreateAssessmentDraftRequestSchema } from "@evidence-loop/contracts/v1";
+import { DurableAssessmentService } from "../assessment/durable-service.ts";
+import { AssessmentHttpError } from "../assessment/durable-errors.ts";
+import { IdempotencyConflictError } from "@evidence-loop/db";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_RATE_LIMIT = Object.freeze({ max: 100, timeWindow: "1 minute" });
@@ -98,12 +102,23 @@ export function buildApp({
     if (error instanceof AuthenticationError || error instanceof UnknownPrincipalError) {
       return reply.code(401).send(errorBody("unauthorized", "Authentication required."));
     }
+    if (error instanceof ContractValidationError) {
+      return reply.code(400).send(errorBody("validation", "Invalid request."));
+    }
+    if (error instanceof IdempotencyConflictError) {
+      return reply.code(409).send(errorBody("idempotency_conflict", "Idempotency key conflicts with a different request."));
+    }
+    if (error instanceof AssessmentHttpError) {
+      return reply.code(error.statusCode).send(errorBody(error.code, error.message));
+    }
     if (error.statusCode === 429 || error.code === "FST_ERR_RATE_LIMIT") {
       return reply.code(429).send(errorBody("rate_limited", "Too many requests. Try again later."));
     }
     if (error.validation) {
       return reply.code(400).send(errorBody("validation", "Invalid request."));
     }
+    const databaseError = error as FastifyError & { constraint?: unknown; constraint_name?: unknown };
+    app.log.error({ error_name: error.name, error_code: error.code ?? "unknown", error_constraint: databaseError.constraint_name ?? databaseError.constraint ?? undefined }, "request failed");
     return reply.code(500).send(errorBody("internal", "Request failed."));
   });
 
@@ -115,6 +130,7 @@ export function buildApp({
   // Fastify plugins are encapsulated. Register routes only after rate-limit is loaded
   // in this scope so the global limiter applies to every API and health endpoint.
   app.after(() => {
+    const assessments = new DurableAssessmentService(client);
     app.setNotFoundHandler(async (_request, reply) => reply.code(404).send(errorBody("not_found", "Resource not found.")));
     app.get("/health/live", async () => ({ status: "live" }));
     app.get("/health/ready", async (_request, reply) => {
@@ -128,6 +144,21 @@ export function buildApp({
     app.get("/v1/me", async (request) => {
       const current = await principal(request);
       return { userId: current.userId, organizationId: current.organizationId };
+    });
+    app.post<{ Params: CourseParams }>("/v1/courses/:courseId/assessments", async (request, reply) => {
+      if (!UUID.test(request.params.courseId)) return reply.code(400).send(errorBody("validation", "Invalid course id."));
+      const body = CreateAssessmentDraftRequestSchema.parse(request.body);
+      const result = await assessments.createInitialDraft(await principal(request), request.params.courseId, body, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined);
+      return reply.code(result.status).send({ assessment_id: result.assessment_id, draft: result.draft, replayed: result.replayed });
+    });
+    app.post<{ Params: { versionId: string } }>("/v1/assessment-versions/:versionId/publish", async (request, reply) => {
+      if (!UUID.test(request.params.versionId)) return reply.code(400).send(errorBody("validation", "Invalid version id."));
+      const result = await assessments.publish(await principal(request), request.params.versionId, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined);
+      return reply.code(result.status).send({ published: result.published, replayed: result.replayed });
+    });
+    app.get<{ Params: { assessmentId: string } }>("/v1/assessments/:assessmentId/published", async (request, reply) => {
+      if (!UUID.test(request.params.assessmentId)) return reply.code(400).send(errorBody("validation", "Invalid assessment id."));
+      return reply.send({ published: await assessments.published(await principal(request), request.params.assessmentId) });
     });
     app.get<{ Params: CourseParams }>("/v1/courses/:courseId/access", async (request, reply) => {
       if (!UUID.test(request.params.courseId)) {
