@@ -3,9 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Evidence Loop instructor workspace shell" />
-    <title>Instructor workspace · Evidence Loop</title>
+    <meta name="description" content="Evidence Loop instructor evidence review" />
+    <title>Review queue · Evidence Loop</title>
     <link rel="stylesheet" href="/assets/shell.css" />
+    <link rel="stylesheet" href="/assets/instructor-review.css" />
   </head>
   <body>
     <a class="el-skip-link" href="#main-content">Skip to main content</a>
@@ -21,67 +22,204 @@
         <aside class="el-sidebar">
           <nav aria-label="Instructor workspace">
             <ul>
-              <li><a class="el-nav-link" aria-current="page" href="/instructor/">Workspace</a></li>
-              <li><a class="el-nav-link" href="#assessments">Assessments</a></li>
-              <li><a class="el-nav-link" href="#activity">Activity</a></li>
+              <li><a class="el-nav-link" aria-current="page" href="/instructor/">Review queue</a></li>
+              <li><a class="el-nav-link" href="#evidence-card">Evidence card</a></li>
+              <li><a class="el-nav-link" href="#review-decision">Human review</a></li>
               <li><a class="el-nav-link" href="/learner/">Learner preview</a></li>
             </ul>
           </nav>
         </aside>
         <main class="el-main" id="main-content">
           <div class="el-content el-stack-lg">
-            <section aria-labelledby="instructor-title">
-              <p class="el-breadcrumb"><a href="/">Evidence Loop</a> / Instructor workspace</p>
-              <p class="el-eyebrow">Instructor shell</p>
-              <h1 id="instructor-title">Welcome to your workspace</h1>
-              <p class="el-lede">Navigation and layout are ready for a future review experience. The cards below are deliberately synthetic placeholders, not learner evidence.</p>
+            <section aria-labelledby="review-title">
+              <p class="el-breadcrumb"><a href="/">Evidence Loop</a> / Instructor review</p>
+              <p class="el-eyebrow">Review queue <span class="el-badge el-badge--info">Synthetic demo data</span></p>
+              <h1 id="review-title">Review learning evidence</h1>
+              <p class="el-lede">Inspect source-linked evidence, add your own feedback, and make the review decision. Evidence Loop does not make that decision for you.</p>
             </section>
 
-            <section class="el-grid" aria-label="Workspace placeholders">
-              <article class="el-card el-card--slight" id="assessments">
-                <div class="el-placeholder-icon" aria-hidden="true">□</div>
-                <h2 class="el-card__title">Assessment workspace</h2>
-                <p class="el-card__body">Published assessment details will be shown here after the assessment workflow is connected.</p>
-                <p class="el-route-note">Placeholder route only — no assessment data is loaded.</p>
-              </article>
-              <article class="el-card el-card--slight" id="activity">
-                <div class="el-placeholder-icon" aria-hidden="true">⌁</div>
-                <h2 class="el-card__title">Review activity</h2>
-                <p class="el-card__body">Future review tools will keep source context and human decisions clearly separated.</p>
-                <p class="el-route-note">Placeholder route only — no learner records are present.</p>
-              </article>
-              <article class="el-card el-card--slight">
-                <div class="el-placeholder-icon" aria-hidden="true">⌘</div>
-                <h2 class="el-card__title">Keyboard navigation</h2>
-                <p class="el-card__body">Use the navigation button or <kbd class="el-key">Ctrl K</kbd> / <kbd class="el-key">⌘ K</kbd> to open the command palette.</p>
-              </article>
-            </section>
-
-            <aside class="el-callout" aria-label="Synthetic content notice">
-              <strong>Synthetic placeholder.</strong> This design-system route does not retrieve, display, or decide anything about a learner.
+            <aside class="el-callout" aria-label="Synthetic data notice">
+              <strong>Synthetic demo.</strong> The learner, notebook, responses, and timestamps below are fictional. This screen shows no connected learner records and records no decision outside this browser session.
             </aside>
+
+            <section class="el-stack" aria-labelledby="queue-title">
+              <div class="el-section-heading">
+                <div>
+                  <p class="el-eyebrow">3 submissions awaiting attention</p>
+                  <h2 id="queue-title">Review queue</h2>
+                </div>
+                <p class="el-section-note">Coverage describes available evidence, not learner ability or a score.</p>
+              </div>
+              <div class="el-table-wrap" tabindex="0" aria-label="Synthetic review queue; scroll horizontally if needed">
+                <table class="el-table el-review-table">
+                  <caption class="el-visually-hidden">Synthetic submission review queue</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Submission</th>
+                      <th scope="col">Objective coverage</th>
+                      <th scope="col">Review state</th>
+                      <th scope="col">Updated</th>
+                      <th scope="col"><span class="el-visually-hidden">Open</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr aria-current="true">
+                      <td><strong>Sample learner A</strong><br /><span class="el-table-detail">Apartment-price notebook · synthetic</span></td>
+                      <td><span class="el-badge el-badge--review">2 demonstrated · 1 needs review</span></td>
+                      <td>Awaiting human review</td>
+                      <td>Today, 10:42</td>
+                      <td><a class="el-button el-button--quiet" href="#evidence-card" aria-label="Open Sample learner A evidence card">Open</a></td>
+                    </tr>
+                    <tr>
+                      <td><strong>Sample learner B</strong><br /><span class="el-table-detail">Apartment-price notebook · synthetic</span></td>
+                      <td><span class="el-badge el-badge--info">Evidence drafting complete</span></td>
+                      <td>Awaiting human review</td>
+                      <td>Today, 10:31</td>
+                      <td><a class="el-button el-button--quiet" href="#evidence-card" aria-label="Open current synthetic evidence card">Open demo</a></td>
+                    </tr>
+                    <tr>
+                      <td><strong>Sample learner C</strong><br /><span class="el-table-detail">Apartment-price notebook · synthetic</span></td>
+                      <td><span class="el-badge el-badge--info">Alternative review requested</span></td>
+                      <td>Human follow-up</td>
+                      <td>Yesterday, 16:18</td>
+                      <td><a class="el-button el-button--quiet" href="#review-decision" aria-label="Open Sample learner C human review controls">Review</a></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="el-stack" id="evidence-card" aria-labelledby="card-title">
+              <div class="el-section-heading">
+                <div>
+                  <p class="el-eyebrow">Sample learner A · current synthetic submission</p>
+                  <h2 id="card-title">Evidence card</h2>
+                </div>
+                <span class="el-badge el-badge--review">AI draft · awaiting human review</span>
+              </div>
+              <p class="el-card-intro">This draft is decision support only. Check each source before recording your own review action.</p>
+
+              <div class="el-evidence-stack">
+                <article class="el-card el-card--slight el-evidence-section" aria-labelledby="demonstrated-title">
+                  <div class="el-evidence-section__heading">
+                    <span class="el-section-marker el-section-marker--positive" aria-hidden="true">✓</span>
+                    <div><h3 id="demonstrated-title">Demonstrated</h3><p>Source-linked indications from this submission.</p></div>
+                  </div>
+                  <ul class="el-claim-list">
+                    <li>
+                      <p class="el-claim-objective">Data preparation</p>
+                      <p class="el-claim-text">The learner explains that scaling is fit after the train/test split so information from the test set is not used during training.</p>
+                      <div class="el-source-links" aria-label="Sources for data preparation claim">
+                        <button class="el-source-link" type="button" data-source-drawer data-source="split-cell">Artifact · notebook cell 07</button>
+                        <button class="el-source-link" type="button" data-source-drawer data-source="scaling-response">Response · question 1, 00:34</button>
+                      </div>
+                    </li>
+                    <li>
+                      <p class="el-claim-objective">Choice justification</p>
+                      <p class="el-claim-text">The learner connects a linear-regression baseline to making model performance interpretable before adding complexity.</p>
+                      <div class="el-source-links" aria-label="Sources for choice justification claim">
+                        <button class="el-source-link" type="button" data-source-drawer data-source="baseline-cell">Artifact · notebook cell 11</button>
+                        <button class="el-source-link" type="button" data-source-drawer data-source="baseline-response">Response · question 2, 01:12</button>
+                      </div>
+                    </li>
+                  </ul>
+                </article>
+
+                <article class="el-card el-card--slight el-evidence-section" aria-labelledby="human-review-title">
+                  <div class="el-evidence-section__heading">
+                    <span class="el-section-marker el-section-marker--review" aria-hidden="true">!</span>
+                    <div><h3 id="human-review-title">Needs human review</h3><p>Partial evidence or an ambiguity that requires your judgment.</p></div>
+                  </div>
+                  <ul class="el-claim-list">
+                    <li>
+                      <p class="el-claim-objective">Leakage and validation</p>
+                      <p class="el-claim-text">The learner identifies leakage in the scaling step, but the submission does not yet show how cross-validation would be kept separate from final test evaluation.</p>
+                      <p class="el-uncertainty"><strong>What remains uncertain:</strong> Whether the learner can apply this distinction when choosing model settings.</p>
+                      <div class="el-source-links" aria-label="Sources for leakage and validation review">
+                        <button class="el-source-link" type="button" data-source-drawer data-source="validation-cell">Artifact · notebook cell 14</button>
+                        <button class="el-source-link" type="button" data-source-drawer data-source="validation-response">Response · question 3, 02:08</button>
+                      </div>
+                    </li>
+                  </ul>
+                </article>
+
+                <article class="el-card el-card--slight el-evidence-section" aria-labelledby="next-step-title">
+                  <div class="el-evidence-section__heading">
+                    <span class="el-section-marker" aria-hidden="true">→</span>
+                    <div><h3 id="next-step-title">Next learning step</h3><p>A small formative follow-up, not a final outcome.</p></div>
+                  </div>
+                  <p class="el-next-step">Invite the learner to describe where they would fit preprocessing while cross-validating a new model, then compare that process with their final held-out test evaluation.</p>
+                  <button class="el-source-link" type="button" data-source-drawer data-source="validation-response">Inspect the related response source</button>
+                </article>
+              </div>
+            </section>
+
+            <section class="el-card el-card--raised el-review-form" id="review-decision" aria-labelledby="decision-title">
+              <div>
+                <p class="el-eyebrow">Instructor action</p>
+                <h2 id="decision-title">Record your review</h2>
+                <p class="el-card__body">Your action is the decision of record. The evidence card above remains an AI draft; edit this feedback and choose the action that reflects your own judgment.</p>
+              </div>
+              <form data-review-form>
+                <fieldset class="el-review-actions">
+                  <legend>Choose a human review action</legend>
+                  <div class="el-review-actions__options">
+                    <label><input type="radio" name="review-action" value="Reviewed" checked /> Reviewed</label>
+                    <label><input type="radio" name="review-action" value="Request follow-up" /> Request follow-up</label>
+                    <label><input type="radio" name="review-action" value="Return for revision" /> Return for revision</label>
+                  </div>
+                </fieldset>
+                <div class="el-field">
+                  <label class="el-label" for="feedback-note">Feedback for the learner <span class="el-optional">(optional)</span></label>
+                  <textarea class="el-textarea" id="feedback-note" name="feedback-note" rows="5">You clearly explained why scaling belongs after the train/test split. For your next step, describe how you would keep cross-validation separate from final test evaluation.</textarea>
+                  <p class="el-help">This editable starting draft is not sent or saved until you record your human decision.</p>
+                </div>
+                <div class="el-review-form__footer">
+                  <button class="el-button el-button--primary" type="submit">Record human review</button>
+                  <p class="el-review-status" role="status" aria-live="polite" data-review-status>No action has been recorded in this synthetic demo.</p>
+                </div>
+              </form>
+            </section>
           </div>
         </main>
       </div>
     </div>
 
+    <dialog class="el-dialog el-source-dialog" id="source-drawer" aria-labelledby="source-drawer-title">
+      <div class="el-dialog__header">
+        <div><p class="el-eyebrow">Current synthetic submission</p><h2 id="source-drawer-title">Source detail</h2></div>
+        <button class="el-button el-button--quiet" type="button" data-source-close>Close</button>
+      </div>
+      <div class="el-dialog__body">
+        <p class="el-source-id" data-source-id></p>
+        <p data-source-context></p>
+        <figure class="el-source-excerpt">
+          <figcaption>Source excerpt</figcaption>
+          <pre><code data-source-excerpt></code></pre>
+        </figure>
+        <p class="el-source-note">This source is scoped to the current submission only. It is shown for provenance inspection, not as a score or final judgment.</p>
+      </div>
+    </dialog>
+
     <dialog class="el-dialog" id="instructor-commands" data-command-palette aria-labelledby="instructor-command-title">
-      <div class="el-dialog__header"><h2 id="instructor-command-title">Navigate workspace</h2><button class="el-button el-button--quiet" type="button" data-command-close>Close</button></div>
+      <div class="el-dialog__header"><h2 id="instructor-command-title">Navigate review</h2><button class="el-button el-button--quiet" type="button" data-command-close>Close</button></div>
       <div class="el-dialog__body">
         <label class="el-label" for="instructor-command-search">Find a destination</label>
         <input class="el-input" id="instructor-command-search" type="search" data-command-search autocomplete="off" />
         <p class="el-visually-hidden" aria-live="polite" data-command-status></p>
         <ul class="el-command-list">
-          <li data-command-item><a class="el-command" href="/instructor/#assessments">Assessment workspace <span class="el-key">↵</span></a></li>
-          <li data-command-item><a class="el-command" href="/instructor/#activity">Review activity <span class="el-key">↵</span></a></li>
+          <li data-command-item><a class="el-command" href="#queue-title">Review queue <span class="el-key">↵</span></a></li>
+          <li data-command-item><a class="el-command" href="#evidence-card">Evidence card <span class="el-key">↵</span></a></li>
+          <li data-command-item><a class="el-command" href="#review-decision">Record a human review <span class="el-key">↵</span></a></li>
           <li data-command-item><a class="el-command" href="/learner/">Learner preview <span class="el-key">↵</span></a></li>
-          <li data-command-item><a class="el-command" href="/">Home <span class="el-key">↵</span></a></li>
         </ul>
       </div>
     </dialog>
     <script type="module">
       import { initialiseEvidenceLoopUi } from "/ui/components.js";
+      import { initialiseInstructorReview } from "/assets/instructor-review.js";
       initialiseEvidenceLoopUi();
+      initialiseInstructorReview();
     </script>
   </body>
 </html>

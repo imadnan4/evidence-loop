@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node ./scripts/check-shell.mjs && node --test ./tests/learner-session-api.test.mjs ./tests/learner-browser-flow.test.mjs",
+    "check": "node ./scripts/check-shell.mjs && node --test ./tests/learner-session-api.test.mjs ./tests/learner-browser-flow.test.mjs ./tests/instructor-review.test.mjs",
     "start": "node ./scripts/serve.mjs"
   }
 }
