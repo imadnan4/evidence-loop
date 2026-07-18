@@ -16,6 +16,7 @@ coverage/
 
 # Local-only planning, agent coordination, and skill state.
 *.md
+!README.md
 docs/
 skills-lock.json
 .agents/
