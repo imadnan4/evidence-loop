@@ -39,8 +39,8 @@ importers:
         specifier: 5.6.1
         version: 5.6.1
       jose:
-        specifier: 6.1.0
-        version: 6.1.0
+        specifier: 6.2.3
+        version: 6.2.3
       pino:
         specifier: 9.14.0
         version: 9.14.0
@@ -390,8 +390,8 @@ packages:
     resolution: {integrity: sha512-9VGk3HGanVE6JoZXHiCpnGy5X0jYDnN4EA4lntFPj+1vIWlFhIylq2CrrCOJH9EAhc5CYhq18F2Av2tgoAPsYQ==}
     engines: {node: '>= 10'}
 
-  jose@6.1.0:
-    resolution: {integrity: sha512-TTQJyoEoKcC1lscpVDCSsVgYzUDg/0Bt3WE//WiTPK6uOCQC2KZS4MpugbMWt/zyjkopgZoXhZuCi00gLudfUA==}
+  jose@6.2.3:
+    resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
 
   json-schema-ref-resolver@3.0.0:
     resolution: {integrity: sha512-hOrZIVL5jyYFjzk7+y7n5JDzGlU8rfWDuYyHwGa2WA8/pcmMHezp2xsVwxrebD/Q9t8Nc5DboieySDpCp4WG4A==}
@@ -692,7 +692,7 @@ snapshots:
 
   ipaddr.js@2.4.0: {}
 
-  jose@6.1.0: {}
+  jose@6.2.3: {}
 
   json-schema-ref-resolver@3.0.0:
     dependencies:
