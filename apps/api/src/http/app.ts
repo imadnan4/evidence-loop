@@ -120,14 +120,15 @@ export function buildApp({
     if (error instanceof AssessmentHttpError) {
       return reply.code(error.statusCode).send(errorBody(error.code, error.message));
     }
-    if (error.statusCode === 429 || error.code === "FST_ERR_RATE_LIMIT") {
+    const err = error as FastifyError;
+    if (err.statusCode === 429 || err.code === "FST_ERR_RATE_LIMIT") {
       return reply.code(429).send(errorBody("rate_limited", "Too many requests. Try again later."));
     }
-    if (error.validation) {
+    if (err.validation) {
       return reply.code(400).send(errorBody("validation", "Invalid request."));
     }
-    const databaseError = error as FastifyError & { constraint?: unknown; constraint_name?: unknown };
-    app.log.error({ error_name: error.name, error_code: error.code ?? "unknown", error_constraint: databaseError.constraint_name ?? databaseError.constraint ?? undefined }, "request failed");
+    const databaseError = err as FastifyError & { constraint?: unknown; constraint_name?: unknown };
+    app.log.error({ error_name: err.name, error_code: err.code ?? "unknown", error_constraint: databaseError.constraint_name ?? databaseError.constraint ?? undefined }, "request failed");
     return reply.code(500).send(errorBody("internal", "Request failed."));
   });
 
