@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { F04aSessionApi, SessionApiError } from "../assets/learner-session-api.js";
+import { F04aSessionApi, SessionApiError } from "../public/demo/assets/learner-session-api.js";
 
 function response(body, options = {}) {
   return new Response(JSON.stringify(body), { status: options.status ?? 200, headers: { "Content-Type": "application/json" } });

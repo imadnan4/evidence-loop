@@ -28,3 +28,4 @@ skills-lock.json
 
 # Preserve intentionally empty workspace directories.
 !.gitkeep
+apps/web/public/ui/

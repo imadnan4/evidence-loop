@@ -6,7 +6,7 @@
     <meta name="description" content="Evidence Loop instructor evidence review" />
     <title>Review queue · Evidence Loop</title>
     <link rel="stylesheet" href="/assets/shell.css" />
-    <link rel="stylesheet" href="/assets/instructor-review.css" />
+    <link rel="stylesheet" href="/demo/assets/instructor-review.css" />
   </head>
   <body>
     <a class="el-skip-link" href="#main-content">Skip to main content</a>
@@ -22,10 +22,10 @@
         <aside class="el-sidebar">
           <nav aria-label="Instructor workspace">
             <ul>
-              <li><a class="el-nav-link" aria-current="page" href="/instructor/">Review queue</a></li>
+              <li><a class="el-nav-link" aria-current="page" href="/demo/instructor/index.html">Review queue</a></li>
               <li><a class="el-nav-link" href="#evidence-card">Evidence card</a></li>
               <li><a class="el-nav-link" href="#review-decision">Human review</a></li>
-              <li><a class="el-nav-link" href="/learner/">Learner preview</a></li>
+              <li><a class="el-nav-link" href="/demo/learner/index.html">Learner preview</a></li>
             </ul>
           </nav>
         </aside>
@@ -211,13 +211,13 @@
           <li data-command-item><a class="el-command" href="#queue-title">Review queue <span class="el-key">↵</span></a></li>
           <li data-command-item><a class="el-command" href="#evidence-card">Evidence card <span class="el-key">↵</span></a></li>
           <li data-command-item><a class="el-command" href="#review-decision">Record a human review <span class="el-key">↵</span></a></li>
-          <li data-command-item><a class="el-command" href="/learner/">Learner preview <span class="el-key">↵</span></a></li>
+          <li data-command-item><a class="el-command" href="/demo/learner/index.html">Learner preview <span class="el-key">↵</span></a></li>
         </ul>
       </div>
     </dialog>
     <script type="module">
       import { initialiseEvidenceLoopUi } from "/ui/components.js";
-      import { initialiseInstructorReview } from "/assets/instructor-review.js";
+      import { initialiseInstructorReview } from "/demo/assets/instructor-review.js";
       initialiseEvidenceLoopUi();
       initialiseInstructorReview();
     </script>
