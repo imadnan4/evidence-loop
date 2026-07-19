@@ -9,13 +9,19 @@ const projectName = `elci${randomBytes(5).toString("hex")}`;
 const directory = await mkdtemp(join(tmpdir(), "evidence-loop-compose-"));
 const bootstrapFile = join(directory, ".env");
 const runtimeFile = join(directory, ".env.runtime");
+const workerRuntimeFile = join(directory, ".env.worker.runtime");
 const postgresUser = "evidence_loop";
 const postgresDatabase = "evidence_loop";
 const postgresPassword = randomBytes(24).toString("hex");
 const postgresAppPassword = randomBytes(24).toString("hex");
+const postgresWorkerPassword = randomBytes(24).toString("hex");
 const minioPassword = randomBytes(24).toString("hex");
 const accessKey = `el${randomBytes(12).toString("hex")}`;
-const secretValues = [postgresPassword, postgresAppPassword, minioPassword, accessKey];
+const apiAccessKey = `api${randomBytes(10).toString("hex")}`;
+const apiSecretKey = randomBytes(24).toString("hex");
+const workerAccessKey = `wrk${randomBytes(10).toString("hex")}`;
+const workerSecretKey = randomBytes(24).toString("hex");
+const secretValues = [postgresPassword, postgresAppPassword, postgresWorkerPassword, minioPassword, accessKey, apiAccessKey, apiSecretKey, workerAccessKey, workerSecretKey];
 const bootstrapEnvironment = [
   "EVIDENCE_LOOP_ENV=ci",
   "SYNTHETIC_DATA_ONLY=true",
@@ -25,12 +31,18 @@ const bootstrapEnvironment = [
   "POSTGRES_PORT=55432",
   "POSTGRES_APP_USER=evidence_loop_app",
   `POSTGRES_APP_PASSWORD=${postgresAppPassword}`,
+  "POSTGRES_WORKER_USER=evidence_loop_worker",
+  `POSTGRES_WORKER_PASSWORD=${postgresWorkerPassword}`,
   `MINIO_ROOT_USER=${accessKey}`,
   `MINIO_ROOT_PASSWORD=${minioPassword}`,
   "MINIO_API_PORT=59000",
   "S3_BUCKET_QUARANTINE=quarantine",
   "S3_BUCKET_CLEAN=clean",
   "S3_BUCKET_DERIVED=derived",
+  `MINIO_API_ACCESS_KEY=${apiAccessKey}`,
+  `MINIO_API_SECRET_KEY=${apiSecretKey}`,
+  `MINIO_WORKER_ACCESS_KEY=${workerAccessKey}`,
+  `MINIO_WORKER_SECRET_KEY=${workerSecretKey}`,
 ].join("\n");
 const runtimeEnvironment = [
   "EVIDENCE_LOOP_ENV=ci",
@@ -39,8 +51,8 @@ const runtimeEnvironment = [
   `DATABASE_URL=postgresql://evidence_loop_app:${postgresAppPassword}@postgres:5432/${postgresDatabase}`,
   "S3_ENDPOINT=http://minio:9000",
   "S3_REGION=us-east-1",
-  `S3_ACCESS_KEY_ID=${accessKey}`,
-  `S3_SECRET_ACCESS_KEY=${minioPassword}`,
+  `S3_ACCESS_KEY_ID=${apiAccessKey}`,
+  `S3_SECRET_ACCESS_KEY=${apiSecretKey}`,
   "S3_BUCKET_QUARANTINE=quarantine",
   "S3_BUCKET_CLEAN=clean",
   "S3_BUCKET_DERIVED=derived",
@@ -52,9 +64,11 @@ const runtimeEnvironment = [
   `DEPLOYMENT_ID=${projectName}`,
   "RELEASE_VERSION=ci",
 ].join("\n");
+const workerRuntimeEnvironment = `${runtimeEnvironment.replace(`evidence_loop_app:${postgresAppPassword}`, `evidence_loop_worker:${postgresWorkerPassword}`).replace(`S3_ACCESS_KEY_ID=${apiAccessKey}`, `S3_ACCESS_KEY_ID=${workerAccessKey}`).replace(`S3_SECRET_ACCESS_KEY=${apiSecretKey}`, `S3_SECRET_ACCESS_KEY=${workerSecretKey}`)}\nCLAMD_SOCKET=/run/clamav/clamd.sock\nCLAMD_SIGNATURE_DIRECTORY=/var/lib/clamav\nCLAMD_MAX_SIGNATURE_AGE_SECONDS=86400`;
 await Promise.all([
   writeFile(bootstrapFile, `${bootstrapEnvironment}\n`, { mode: 0o600 }),
   writeFile(runtimeFile, `${runtimeEnvironment}\n`, { mode: 0o600 }),
+  writeFile(workerRuntimeFile, `${workerRuntimeEnvironment}\n`, { mode: 0o600 }),
 ]);
 
 function redact(value) {
@@ -69,6 +83,7 @@ function compose(args, inherit = true) {
         ...process.env,
         EVIDENCE_LOOP_ENV_FILE: bootstrapFile,
         EVIDENCE_LOOP_RUNTIME_ENV_FILE: runtimeFile,
+        EVIDENCE_LOOP_WORKER_RUNTIME_ENV_FILE: workerRuntimeFile,
       },
     });
     let output = "";
@@ -126,12 +141,12 @@ function assertConfigIsolation(configuration) {
   const migration = environmentMap(services.migrate);
   assert.deepEqual([...migration.keys()].sort(), ["MIGRATION_DATABASE_URL"]);
   const roleInit = environmentMap(services["db-role-init"]);
-  assert.deepEqual([...roleInit.keys()].sort(), ["PGDATABASE", "PGHOST", "PGPASSWORD", "PGPORT", "PGUSER", "POSTGRES_APP_PASSWORD", "POSTGRES_APP_USER"]);
+  assert.deepEqual([...roleInit.keys()].sort(), ["PGDATABASE", "PGHOST", "PGPASSWORD", "PGPORT", "PGUSER", "POSTGRES_APP_PASSWORD", "POSTGRES_APP_USER", "POSTGRES_WORKER_PASSWORD", "POSTGRES_WORKER_USER"]);
 }
 
 function assertActualRuntimeEnvironment(text, service) {
   const keys = new Set(text.split(/\r?\n/).map((line) => line.slice(0, line.indexOf("="))).filter(Boolean));
-  for (const key of ["MIGRATION_DATABASE_URL", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "POSTGRES_APP_USER", "POSTGRES_APP_PASSWORD", "PGPASSWORD", "PGUSER"]) {
+  for (const key of ["MIGRATION_DATABASE_URL", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "POSTGRES_APP_USER", "POSTGRES_APP_PASSWORD", "POSTGRES_WORKER_USER", "POSTGRES_WORKER_PASSWORD", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "PGPASSWORD", "PGUSER"]) {
     assert.ok(!keys.has(key), `${service} runtime environment must not include ${key}`);
   }
   assert.ok(keys.has("DATABASE_URL"), `${service} must have non-owner DATABASE_URL`);
@@ -152,15 +167,43 @@ try {
     "-U", postgresUser, "-d", postgresDatabase, "-tAc", "SELECT 1",
   ], false));
   assert.equal(readyResult.trim(), "1");
-  const runtimeRole = await compose([
-    "exec", "-T", "postgres", "psql", "-X", "-v", "ON_ERROR_STOP=1",
-    "-U", postgresUser, "-d", postgresDatabase, "-tAc",
-    "SELECT rolsuper::text || ',' || rolbypassrls::text FROM pg_roles WHERE rolname = 'evidence_loop_app'",
-  ], false);
-  assert.equal(runtimeRole.trim(), "false,false");
-  for (const service of ["api", "worker"]) {
-    assertActualRuntimeEnvironment(await compose(["exec", "-T", service, "env"], false), service);
+  for (const runtimeRoleName of ["evidence_loop_app", "evidence_loop_worker"]) {
+    const runtimeRole = await compose([
+      "exec", "-T", "postgres", "psql", "-X", "-v", "ON_ERROR_STOP=1",
+      "-U", postgresUser, "-d", postgresDatabase, "-tAc",
+      `SELECT rolsuper::text || ',' || rolbypassrls::text FROM pg_roles WHERE rolname = '${runtimeRoleName}'`,
+    ], false);
+    assert.equal(runtimeRole.trim(), "false,false", `${runtimeRoleName} must remain a non-owner NOBYPASSRLS role`);
   }
+  const apiEnvironment = await compose(["exec", "-T", "api", "env"], false);
+  const workerEnvironment = await compose(["exec", "-T", "worker", "env"], false);
+  assertActualRuntimeEnvironment(apiEnvironment, "api");
+  assertActualRuntimeEnvironment(workerEnvironment, "worker");
+  assert.match(apiEnvironment, new RegExp(`^S3_ACCESS_KEY_ID=${apiAccessKey}$`, "m"));
+  assert.match(workerEnvironment, new RegExp(`^S3_ACCESS_KEY_ID=${workerAccessKey}$`, "m"));
+  assert.doesNotMatch(apiEnvironment, new RegExp(workerAccessKey));
+  assert.doesNotMatch(workerEnvironment, new RegExp(apiAccessKey));
+  // Presence/readability only: no signature filename, content, or host path is emitted.
+  await eventually(() => compose(["exec", "-T", "worker", "/bin/sh", "-ec", "test -S /run/clamav/clamd.sock && test -r /var/lib/clamav"], false));
+  // Exercise the deployed Unix-socket INSTREAM path. The worker's normal
+  // handler maps this FOUND verdict to rejected before parser/promotion; this
+  // probe never supplies an artifact key or any storage capability.
+  const eicarSocketProbe = `const net=require("node:net");const data=Buffer.from("X5O!P%@AP[4\\\\PZX54(P^)7CC)7}\$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!\$H+H*");const socket=net.createConnection({path:"/run/clamav/clamd.sock"});let reply="";const timer=setTimeout(()=>fail(),30000);const fail=()=>{clearTimeout(timer);socket.destroy();process.exit(1)};socket.once("error",fail);socket.on("data",chunk=>{reply+=chunk; if(/[\\0\\n]/.test(reply)){clearTimeout(timer);socket.destroy();process.exit(/: [^\\0\\n]+ FOUND[\\0\\n]*$/.test(reply)?0:1)}});socket.once("connect",()=>{socket.write(Buffer.from("zINSTREAM\\0"));const n=Buffer.alloc(4);n.writeUInt32BE(data.length);socket.write(n);socket.write(data);socket.write(Buffer.alloc(4))});`;
+  await compose(["exec", "-T", "worker", "node", "-e", eicarSocketProbe], false);
+  // Exercise the actual service-account policies without printing credentials.
+  // The probes use the same q/c/d prefixes hard-coded by PrivateS3Storage.
+  await compose([
+    "run", "--rm", "--no-deps", "--entrypoint", "/bin/sh", "-e", `MINIO_ROOT_USER=${apiAccessKey}`, "-e", `MINIO_ROOT_PASSWORD=${apiSecretKey}`, "minio-init", "-ec",
+    'mc alias set scoped http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; printf x | mc pipe scoped/quarantine/q/iam-probe >/dev/null; ! mc cat scoped/quarantine/q/iam-probe >/dev/null 2>&1; ! sh -c "printf x | mc pipe scoped/clean/c/api-denied >/dev/null"; ! sh -c "printf x | mc pipe scoped/derived/d/api-denied >/dev/null"',
+  ], false);
+  await compose([
+    "run", "--rm", "--no-deps", "--entrypoint", "/bin/sh", "-e", `MINIO_ROOT_USER=${workerAccessKey}`, "-e", `MINIO_ROOT_PASSWORD=${workerSecretKey}`, "minio-init", "-ec",
+    'mc alias set scoped http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc cat scoped/quarantine/q/iam-probe >/dev/null; printf x | mc pipe scoped/clean/c/iam-probe >/dev/null; printf x | mc pipe scoped/derived/d/iam-probe >/dev/null; ! sh -c "printf x | mc pipe scoped/quarantine/q/worker-denied >/dev/null"; ! mc cat scoped/clean/c/iam-probe >/dev/null 2>&1; ! mc cat scoped/derived/d/iam-probe >/dev/null 2>&1',
+  ], false);
+  await compose([
+    "exec", "-T", "postgres", "/bin/sh", "-ec",
+    `PGPASSWORD='${postgresWorkerPassword}' psql -X -v ON_ERROR_STOP=1 -U evidence_loop_worker -d ${postgresDatabase} -c 'SELECT id FROM artifacts' >/dev/null 2>&1 && exit 1 || exit 0`,
+  ], false);
   const testEnvironment = `DATABASE_URL=postgresql://${postgresUser}:${postgresPassword}@postgres:5432/${postgresDatabase}`;
   const testContainer = [
     "run", "--rm", "--network", `${projectName}_platform`,

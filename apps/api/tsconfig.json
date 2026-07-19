@@ -8,6 +8,7 @@
   "include": [
     "src/auth/**/*.ts",
     "src/http/**/*.ts",
+    "src/artifacts/**/*.ts",
     "src/db/**/*.ts",
     "src/main.ts",
     "src/migrate.ts",

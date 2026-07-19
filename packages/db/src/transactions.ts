@@ -144,7 +144,7 @@ export async function writeWithAuditAndOutbox<T>(
     actorId: string | null;
     correlationId: string;
     audit: Readonly<{ action: string; targetType: string; targetId: string; metadata?: unknown }>;
-    outbox: Readonly<{ aggregateType: string; aggregateId: string; topic: string; payload: Record<string, postgres.JSONValue> }>;
+    outbox: Readonly<{ aggregateType: string; aggregateId: string; topic: string; payload: Record<string, postgres.JSONValue>; dedupeKey?: string }>;
     domainWrite: (transaction: TransactionSql) => Promise<T>;
   }>,
 ): Promise<T> {
@@ -154,7 +154,7 @@ export async function writeWithAuditAndOutbox<T>(
     INSERT INTO audit_events (organization_id, actor_id, correlation_id, action, target_type, target_id, metadata)
     VALUES (${input.organizationId}, ${input.actorId}, ${input.correlationId}, ${input.audit.action}, ${input.audit.targetType}, ${input.audit.targetId}, ${transaction.json(metadata)})`;
   await transaction`
-    INSERT INTO outbox_events (organization_id, aggregate_type, aggregate_id, topic, payload)
-    VALUES (${input.organizationId}, ${input.outbox.aggregateType}, ${input.outbox.aggregateId}, ${input.outbox.topic}, ${transaction.json(input.outbox.payload)})`;
+    INSERT INTO outbox_events (organization_id, aggregate_type, aggregate_id, topic, payload, dedupe_key)
+    VALUES (${input.organizationId}, ${input.outbox.aggregateType}, ${input.outbox.aggregateId}, ${input.outbox.topic}, ${transaction.json(input.outbox.payload)}, ${input.outbox.dedupeKey ?? null})`;
   return result;
 }

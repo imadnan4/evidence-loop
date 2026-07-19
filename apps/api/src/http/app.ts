@@ -12,6 +12,8 @@ import { ContractValidationError, CreateAssessmentDraftRequestSchema } from "@ev
 import { DurableAssessmentService } from "../assessment/durable-service.ts";
 import { AssessmentHttpError } from "../assessment/durable-errors.ts";
 import { IdempotencyConflictError } from "@evidence-loop/db";
+import type { ArtifactStorage } from "@evidence-loop/artifact-pipeline";
+import { DurableArtifactService, ArtifactHttpError } from "../artifacts/durable-service.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_RATE_LIMIT = Object.freeze({ max: 100, timeWindow: "1 minute" });
@@ -24,6 +26,7 @@ type Dependencies = Readonly<{
   verifyToken?: TokenVerifier;
   rateLimit?: RateLimitSettings;
   loggerStream?: DestinationStream;
+  artifactStorage?: ArtifactStorage;
 }>;
 type CourseParams = Readonly<{ courseId: string }>;
 
@@ -47,7 +50,9 @@ export function buildApp({
   verifyToken = createTokenVerifier(environment.oidc),
   rateLimit: rateLimitSettings = DEFAULT_RATE_LIMIT,
   loggerStream,
+  artifactStorage,
 }: Dependencies) {
+  const runtimeStorage: ArtifactStorage = artifactStorage ?? { putQuarantine: async () => { throw new Error("storage unavailable"); }, readQuarantine: async () => { throw new Error("storage unavailable"); }, deleteQuarantine: async () => { throw new Error("storage unavailable"); }, putClean: async () => { throw new Error("storage unavailable"); }, putDerived: async () => { throw new Error("storage unavailable"); } };
   const allowedOrigins = new Set(environment.allowedWebOrigins.map((origin) => origin.origin));
   // Request logs intentionally whitelist fields. In particular, paths, query strings,
   // headers, request bodies, and provider errors are not telemetry until D03's redaction work.
@@ -62,7 +67,8 @@ export function buildApp({
       },
     },
   }, loggerStream);
-  const app = Fastify({ loggerInstance: logger, trustProxy: false });
+  const app = Fastify({ loggerInstance: logger, trustProxy: false, bodyLimit: 5 * 1024 * 1024 });
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
 
   app.register(cors, {
     origin: (origin, callback) => callback(null, Boolean(origin && allowedOrigins.has(origin))),
@@ -108,6 +114,9 @@ export function buildApp({
     if (error instanceof IdempotencyConflictError) {
       return reply.code(409).send(errorBody("idempotency_conflict", "Idempotency key conflicts with a different request."));
     }
+    if (error instanceof ArtifactHttpError) {
+      return reply.code(error.statusCode).send(errorBody(error.code, error.code === "not_found" ? "Resource not found." : "Request cannot be completed."));
+    }
     if (error instanceof AssessmentHttpError) {
       return reply.code(error.statusCode).send(errorBody(error.code, error.message));
     }
@@ -131,6 +140,7 @@ export function buildApp({
   // in this scope so the global limiter applies to every API and health endpoint.
   app.after(() => {
     const assessments = new DurableAssessmentService(client);
+    const artifacts = new DurableArtifactService(client, runtimeStorage, environment.objectStorage.secretAccessKey);
     app.setNotFoundHandler(async (_request, reply) => reply.code(404).send(errorBody("not_found", "Resource not found.")));
     app.get("/health/live", async () => ({ status: "live" }));
     app.get("/health/ready", async (_request, reply) => {
@@ -155,6 +165,26 @@ export function buildApp({
       if (!UUID.test(request.params.versionId)) return reply.code(400).send(errorBody("validation", "Invalid version id."));
       const result = await assessments.publish(await principal(request), request.params.versionId, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined);
       return reply.code(result.status).send({ published: result.published, replayed: result.replayed });
+    });
+    app.post<{ Params: { versionId: string } }>("/v1/assessment-versions/:versionId/submissions", async (request, reply) => {
+      if (!UUID.test(request.params.versionId)) return reply.code(400).send(errorBody("validation", "Invalid assessment version id."));
+      const result = await artifacts.createSubmission(await principal(request), request.params.versionId, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined);
+      return reply.code(result.replayed ? 200 : 201).send(result);
+    });
+    app.post<{ Params: { submissionId: string } }>("/v1/submissions/:submissionId/artifacts/upload-intents", async (request, reply) => {
+      if (!UUID.test(request.params.submissionId)) return reply.code(400).send(errorBody("validation", "Invalid submission id."));
+      const result = await artifacts.issueIntent(await principal(request), request.params.submissionId, request.body, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined);
+      // The upload capability is application-only and short-lived; no storage capability is exposed.
+      return reply.code(result.replayed ? 200 : 201).send({ artifact_id: result.artifact_id, upload_intent_id: result.intent_id, expires_at: result.expires_at, upload_capability: result.capability, upload_path: `/v1/artifact-upload-intents/${result.intent_id}/content`, replayed: result.replayed });
+    });
+    app.put<{ Params: { intentId: string }; Body: Buffer }>("/v1/artifact-upload-intents/:intentId/content", async (request, reply) => {
+      if (!UUID.test(request.params.intentId) || !Buffer.isBuffer(request.body)) return reply.code(400).send(errorBody("validation", "Invalid upload."));
+      const result = await artifacts.upload(await principal(request), request.params.intentId, typeof request.headers["upload-capability"] === "string" ? request.headers["upload-capability"] : undefined, request.body, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined);
+      return reply.code(result.replayed ? 200 : 201).send({ artifact_id: result.artifact_id, status: "uploaded", replayed: result.replayed });
+    });
+    app.get<{ Params: { submissionId: string; artifactId: string } }>("/v1/submissions/:submissionId/artifacts/:artifactId", async (request, reply) => {
+      if (!UUID.test(request.params.submissionId) || !UUID.test(request.params.artifactId)) return reply.code(400).send(errorBody("validation", "Invalid artifact id."));
+      return reply.send(await artifacts.status(await principal(request), request.params.submissionId, request.params.artifactId));
     });
     app.get<{ Params: { assessmentId: string } }>("/v1/assessments/:assessmentId/published", async (request, reply) => {
       if (!UUID.test(request.params.assessmentId)) return reply.code(400).send(errorBody("validation", "Invalid assessment id."));

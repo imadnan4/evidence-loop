@@ -46,8 +46,11 @@ async function scalar(client: Sql<{}> | TransactionSql, query: ReturnType<Sql<{}
 const databaseName = `el_a02_${randomUUID().replaceAll("-", "")}`;
 const applicationRole = `el_app_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 const applicationPassword = randomBytes(24).toString("hex");
+const workerRole = `el_worker_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+const workerPassword = randomBytes(24).toString("hex");
 let admin: Sql<{}>;
 let application: Sql<{}>;
+let worker: Sql<{}>;
 let organizationA: string;
 let organizationB: string;
 let userA: string;
@@ -55,8 +58,8 @@ let userB: string;
 let courseA: string;
 let migrationDirectory: string;
 
-async function appTransaction<T>(organizationId: string, operation: (transaction: TransactionSql) => Promise<T>): Promise<T> {
-  return withTenantTransaction(application, { organizationId, actorId: null, correlationId: randomUUID() }, operation);
+async function appTransaction<T>(organizationId: string, operation: (transaction: TransactionSql) => Promise<T>, actorId: string | null = null): Promise<T> {
+  return withTenantTransaction(application, { organizationId, actorId, correlationId: randomUUID() }, operation);
 }
 
 test.before(async () => {
@@ -88,12 +91,17 @@ test.before(async () => {
   }
   const rerun = await applyMigrations(migrator);
   assert.deepEqual(rerun.applied, []);
-  assert.deepEqual(rerun.skipped, ["0001_database_kernel.sql", "0002_assessment_authoring.sql"]);
+  assert.deepEqual(rerun.skipped, ["0001_database_kernel.sql", "0002_assessment_authoring.sql", "0003_artifact_pipeline.sql"]);
 
-  await migrator.unsafe(`CREATE ROLE ${applicationRole} LOGIN PASSWORD '${applicationPassword}' NOINHERIT`);
-  await migrator.unsafe(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
+  await migrator.unsafe(`CREATE ROLE ${applicationRole} LOGIN PASSWORD '${applicationPassword}' NOINHERIT NOBYPASSRLS`);
+  await migrator.unsafe(`CREATE ROLE ${workerRole} LOGIN PASSWORD '${workerPassword}' NOINHERIT NOBYPASSRLS`);
+  await migrator.unsafe(`GRANT CONNECT ON DATABASE ${databaseName} TO ${applicationRole}, ${workerRole}`);
+  await migrator.unsafe(`GRANT USAGE ON SCHEMA public TO ${applicationRole}, ${workerRole}`);
   await migrator.unsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${applicationRole}`);
+  await migrator.unsafe(`GRANT EXECUTE ON FUNCTION complete_artifact_upload(uuid, uuid, uuid, uuid, text, text, text) TO ${applicationRole}`);
+  await migrator.unsafe(`GRANT EXECUTE ON FUNCTION claim_artifact_outbox(text, integer), finish_artifact_outbox(uuid, text, boolean, text), load_claimed_artifact(uuid, text), terminal_claimed_artifact(uuid, text, text, text, text), claim_stale_artifact_upload_intents(text, integer), finish_stale_artifact_upload_intent(uuid, text, boolean, integer, text) TO ${workerRole}`);
   application = postgres(testDatabaseUrl(baseUrl, databaseName, applicationRole, applicationPassword), { max: 4, prepare: false });
+  worker = postgres(testDatabaseUrl(baseUrl, databaseName, workerRole, workerPassword), { max: 2, prepare: false });
 
   organizationA = randomUUID();
   organizationB = randomUUID();
@@ -107,6 +115,7 @@ test.before(async () => {
     INSERT INTO internal_users (id, organization_id, subject) VALUES
       (${userA}, ${organizationA}, 'synthetic-user-a'), (${userB}, ${organizationB}, 'synthetic-user-b')`;
   await migrator`INSERT INTO courses (id, organization_id, code, title) VALUES (${courseA}, ${organizationA}, 'A02', 'Synthetic course')`;
+  await migrator`INSERT INTO course_memberships (organization_id, course_id, user_id, role) VALUES (${organizationA}, ${courseA}, ${userA}, 'learner')`;
   await assert.rejects(
     () => migrator`INSERT INTO audit_events (organization_id, actor_id, correlation_id, action, target_type, target_id) VALUES (${organizationA}, ${userB}, ${randomUUID()}, 'invalid.actor', 'course', ${courseA})`,
     /audit_events_actor_id_organization_id_fkey/,
@@ -119,6 +128,7 @@ test.before(async () => {
 });
 
 test.after(async () => {
+  await worker?.end({ timeout: 2 });
   await application?.end({ timeout: 2 });
   await admin?.unsafe(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
   await admin?.end({ timeout: 2 });
@@ -341,4 +351,149 @@ test("domain, audit, and outbox writes roll back together, including rejected au
     assert.equal(await scalar(transaction, transaction`SELECT count(*) FROM audit_events WHERE target_id = ${courseId}`), 0);
     assert.equal(await scalar(transaction, transaction`SELECT count(*) FROM outbox_events WHERE aggregate_id = ${courseId}`), 0);
   });
+});
+
+test("B04 RLS exposes artifacts only to the owner or scoped staff", async () => {
+  const otherLearner = randomUUID();
+  const otherCourseLearner = randomUUID();
+  const staff = randomUUID();
+  const otherCourse = randomUUID();
+  const assessment = randomUUID();
+  const version = randomUUID();
+  const submission = randomUUID();
+  const artifact = randomUUID();
+
+  await appTransaction(organizationA, async (transaction) => {
+    await transaction`INSERT INTO internal_users (id, organization_id, subject) VALUES (${otherLearner}, ${organizationA}, 'same-course-learner'), (${otherCourseLearner}, ${organizationA}, 'other-course-learner'), (${staff}, ${organizationA}, 'scoped-staff')`;
+    await transaction`INSERT INTO courses (id, organization_id, code, title) VALUES (${otherCourse}, ${organizationA}, 'B04-OTHER', 'Other synthetic course')`;
+    await transaction`INSERT INTO course_memberships (organization_id, course_id, user_id, role) VALUES (${organizationA}, ${courseA}, ${otherLearner}, 'learner'), (${organizationA}, ${courseA}, ${staff}, 'teaching_assistant'), (${organizationA}, ${otherCourse}, ${otherCourseLearner}, 'learner')`;
+    await transaction`INSERT INTO assessments (id, organization_id, course_id, title) VALUES (${assessment}, ${organizationA}, ${courseA}, 'B04 scoped assessment')`;
+    await transaction`INSERT INTO assessment_versions (id, organization_id, course_id, assessment_id, version_number, title, assignment_instructions, learner_facing_text, ai_use_policy, privacy_summary, completion_criteria, text_check_in, voice_check_in, extra_time, pause_and_resume, alternative_assessment_request, question_budget, time_budget_minutes, created_by) VALUES (${version}, ${organizationA}, ${courseA}, ${assessment}, 1, 'B04 version', 'Synthetic instructions.', 'Synthetic policy.', 'allowed', 'Synthetic privacy.', 'Synthetic completion.', true, false, false, true, true, 3, 3, ${userA})`;
+    await transaction`UPDATE assessment_versions SET state='published', published_by=${userA}, published_at=now() WHERE id=${version}`;
+    await transaction`UPDATE assessments SET state='published', current_published_version_id=${version} WHERE id=${assessment}`;
+    await transaction`INSERT INTO submissions (id, organization_id, course_id, assessment_id, assessment_version_id, learner_id) VALUES (${submission}, ${organizationA}, ${courseA}, ${assessment}, ${version}, ${userA})`;
+    await transaction`INSERT INTO artifacts (id, organization_id, submission_id, quarantine_key, declared_extension, declared_content_type, byte_size, sha256) VALUES (${artifact}, ${organizationA}, ${submission}, 'q/scoped-artifact', '.txt', 'text/plain', 1, ${"a".repeat(64)})`;
+  }, userA);
+
+  await appTransaction(organizationA, async (transaction) => {
+    assert.equal((await transaction`SELECT id FROM artifacts WHERE id=${artifact}`).length, 0);
+  }, otherLearner);
+  await appTransaction(organizationA, async (transaction) => {
+    assert.equal((await transaction`SELECT id FROM artifacts WHERE id=${artifact}`).length, 0);
+  }, otherCourseLearner);
+  await appTransaction(organizationA, async (transaction) => {
+    assert.deepEqual((await transaction`SELECT id FROM artifacts WHERE id=${artifact}`).map((row) => row.id), [artifact]);
+  }, staff);
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`UPDATE artifacts SET sha256=${"b".repeat(64)} WHERE id=${artifact}`, userA),
+    /artifact identity is immutable/,
+  );
+
+  const intent = randomUUID();
+  const fragment = randomUUID();
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`INSERT INTO artifact_fragments (id, organization_id, submission_id, artifact_id, ordinal, locator, content_type, content, content_hash, parser_version) VALUES (${fragment}, ${organizationA}, ${submission}, ${artifact}, 0, ${transaction.json({ line_start: 1, line_end: 1 })}, 'text', 'pre-clean', ${"d".repeat(64)}, 'test')`, userA),
+    /artifact fragments are lifecycle-managed/,
+  );
+  await appTransaction(organizationA, async (transaction) => {
+    await transaction`INSERT INTO artifact_upload_intents (id, organization_id, submission_id, artifact_id, actor_id, token_digest, expected_byte_size, expected_sha256, expires_at) VALUES (${intent}, ${organizationA}, ${submission}, ${artifact}, ${userA}, ${"c".repeat(64)}, 1, ${"a".repeat(64)}, now() + interval '1 minute')`;
+  }, userA);
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`UPDATE artifact_upload_intents SET consumed_at=now() WHERE id=${intent}`, userA),
+    /artifact upload intents are lifecycle-managed/,
+  );
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`DELETE FROM artifact_upload_intents WHERE id=${intent}`, userA),
+    /artifact upload intents are lifecycle-managed/,
+  );
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`DELETE FROM artifacts WHERE id=${artifact}`, userA),
+    /artifact lifecycle is managed by fixed functions/,
+  );
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`DELETE FROM submissions WHERE id=${submission}`, userA),
+    /submission lifecycle is managed by fixed functions/,
+  );
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`INSERT INTO artifact_events (organization_id, artifact_id, event_type) VALUES (${organizationA}, ${artifact}, 'uploaded')`, userA),
+    /artifact events are lifecycle-managed/,
+  );
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`UPDATE artifacts SET status='ready', clean_key='clean/scoped-artifact', derived_key='derived/scoped-artifact', scan_completed_at=now(), parsed_at=now() WHERE id=${artifact}`, userA),
+    /artifact lifecycle is managed by fixed functions/,
+  );
+
+  const operation = `artifact.upload:${intent}`;
+  const key = `upload_${randomUUID().replaceAll("-", "")}`;
+  await appTransaction(organizationA, async (transaction) => {
+    await reserveIdempotencyKey(transaction, { organizationId: organizationA, operation, key, requestFingerprint: "f".repeat(64) });
+    const completed = await transaction<{ artifact_id: string | null }[]>`SELECT complete_artifact_upload(${organizationA},${userA},${randomUUID()},${intent},${"c".repeat(64)},${operation},${key}) AS artifact_id`;
+    assert.deepEqual(completed.map((row) => row.artifact_id), [artifact]);
+    const state = await transaction<{ status: string; submission_state: string; consumed_at: Date | null }[]>`
+      SELECT a.status, s.state AS submission_state, i.consumed_at
+      FROM artifacts a JOIN submissions s ON s.id=a.submission_id AND s.organization_id=a.organization_id
+      JOIN artifact_upload_intents i ON i.artifact_id=a.id AND i.organization_id=a.organization_id
+      WHERE a.id=${artifact}`;
+    assert.equal(state[0]?.status, "uploaded");
+    assert.equal(state[0]?.submission_state, "uploading");
+    assert.ok(state[0]?.consumed_at instanceof Date);
+    assert.equal(await scalar(transaction, transaction`SELECT count(*) FROM artifact_events WHERE artifact_id=${artifact} AND event_type='uploaded'`), 1);
+    assert.equal(await scalar(transaction, transaction`SELECT count(*) FROM outbox_events WHERE aggregate_id=${artifact} AND topic='artifact.normalize'`), 1);
+  }, userA);
+});
+
+test("B04 submission inserts require learner enrollment at the database boundary", async () => {
+  const nonMemberCourse = randomUUID();
+  const assessment = randomUUID();
+  const version = randomUUID();
+  const submission = randomUUID();
+  await appTransaction(organizationA, async (transaction) => {
+    await transaction`INSERT INTO courses (id, organization_id, code, title) VALUES (${nonMemberCourse}, ${organizationA}, 'B04-NONMEMBER', 'Nonmember synthetic course')`;
+    await transaction`INSERT INTO assessments (id, organization_id, course_id, title) VALUES (${assessment}, ${organizationA}, ${nonMemberCourse}, 'B04 nonmember assessment')`;
+    await transaction`INSERT INTO assessment_versions (id, organization_id, course_id, assessment_id, version_number, title, assignment_instructions, learner_facing_text, ai_use_policy, privacy_summary, completion_criteria, text_check_in, voice_check_in, extra_time, pause_and_resume, alternative_assessment_request, question_budget, time_budget_minutes, created_by) VALUES (${version}, ${organizationA}, ${nonMemberCourse}, ${assessment}, 1, 'B04 nonmember version', 'Synthetic instructions.', 'Synthetic policy.', 'allowed', 'Synthetic privacy.', 'Synthetic completion.', true, false, false, true, true, 3, 3, ${userA})`;
+    await transaction`UPDATE assessment_versions SET state='published', published_by=${userA}, published_at=now() WHERE id=${version}`;
+    await transaction`UPDATE assessments SET state='published', current_published_version_id=${version} WHERE id=${assessment}`;
+  }, userA);
+  await assert.rejects(
+    () => appTransaction(organizationA, (transaction) => transaction`INSERT INTO submissions (id, organization_id, course_id, assessment_id, assessment_version_id, learner_id) VALUES (${submission}, ${organizationA}, ${nonMemberCourse}, ${assessment}, ${version}, ${userA})`, userA),
+    /row-level security/,
+  );
+});
+
+test("B04 API and worker database roles are separated", async () => {
+  await assert.rejects(
+    () => application`SELECT claim_artifact_outbox('api-role-must-not-claim', 5)`,
+    /permission denied/,
+  );
+  await assert.rejects(
+    () => worker`SELECT id FROM artifacts LIMIT 1`,
+    /permission denied/,
+  );
+});
+
+test("artifact outbox leasing is exclusive, retries with a bounded DLQ", async () => {
+  const eventId = randomUUID();
+  const aggregateId = randomUUID();
+  await appTransaction(organizationA, async (transaction) => {
+    await transaction`UPDATE outbox_events SET processed_at=now() WHERE topic='artifact.normalize' AND processed_at IS NULL AND dead_lettered_at IS NULL`;
+  }, userA);
+  await appTransaction(organizationA, async (transaction) => {
+    await transaction`INSERT INTO outbox_events (id, organization_id, aggregate_type, aggregate_id, topic, payload, dedupe_key) VALUES (${eventId}, ${organizationA}, 'artifact', ${aggregateId}, 'artifact.normalize', ${transaction.json({ artifact_id: aggregateId })}, ${`artifact.normalize:${aggregateId}`})`;
+  }, userA);
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const claim = await worker<{ id: string; attempt_count: number }[]>`SELECT id,attempt_count FROM claim_artifact_outbox('lease-worker-a', 5)`;
+    assert.deepEqual(claim.map((row) => row.id), [eventId]);
+    assert.equal(claim[0]?.attempt_count, attempt);
+    const contender = await worker`SELECT * FROM claim_artifact_outbox('lease-worker-b', 5)`;
+    assert.equal(contender.length, 0);
+    await worker`SELECT finish_artifact_outbox(${eventId}, 'lease-worker-a', false, 'scanner_unavailable')`;
+    if (attempt < 5) await appTransaction(organizationA, (transaction) => transaction`UPDATE outbox_events SET available_at=now() WHERE id=${eventId}`, userA);
+  }
+  await appTransaction(organizationA, async (transaction) => {
+    const state = await transaction<{ dead_lettered_at: Date | null; last_error_code: string | null; processed_at: Date | null }[]>`SELECT dead_lettered_at,last_error_code,processed_at FROM outbox_events WHERE id=${eventId}`;
+    assert.ok(state[0]?.dead_lettered_at instanceof Date);
+    assert.equal(state[0]?.last_error_code, "scanner_unavailable");
+    assert.equal(state[0]?.processed_at, null);
+    assert.equal((await worker`SELECT * FROM claim_artifact_outbox('lease-worker-c', 5)`).length, 0);
+  }, userA);
 });

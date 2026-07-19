@@ -41,6 +41,60 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  # A transient root-only initializer grants the fixed clamav group access to
+  # the Unix-socket directory. API never mounts this volume.
+  clamav-socket-init:
+    image: alpine:3.21.3
+    command: ["/bin/sh", "-ec", "mkdir -p /run/clamav && chmod 0770 /run/clamav && chown 100:101 /run/clamav"]
+    volumes:
+      - clamav-socket:/run/clamav
+    networks: [platform]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=1m"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    # The one-shot owner change is the only privileged operation; scanner and
+    # worker retain an empty capability set.
+    cap_add: [CHOWN]
+    restart: "no"
+
+  # Official ClamAV daemon. It accepts only a Unix-domain INSTREAM socket;
+  # port 3310 is deliberately never published or exposed to the API.
+  clamav:
+    image: clamav/clamav:1.4.2_base@sha256:26a576bbed25fe1de510891ff54697c161124050a03e1c5d59b5b9bdf21c3366
+    # /init-unprivileged cannot apply CLAMD_CONF_* before starting clamd.
+    # This explicit non-root command instead uses the reviewed mounted config.
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["freshclam --foreground --stdout --config-file=/etc/clamav/freshclam.conf || exit 1; while :; do rm -f /tmp/restart-clamd; clamd --foreground --config-file=/etc/clamav/clamd.runtime.conf & clamd_pid=$$!; (sleep 21600; if freshclam --foreground --stdout --config-file=/etc/clamav/freshclam.conf; then : > /tmp/restart-clamd; kill -TERM $$clamd_pid; fi) & updater_pid=$$!; trap 'kill -TERM $$clamd_pid $$updater_pid 2>/dev/null || true; wait $$clamd_pid 2>/dev/null || true; exit 0' TERM INT; wait $$clamd_pid; clamd_status=$$?; kill $$updater_pid 2>/dev/null || true; wait $$updater_pid 2>/dev/null || true; if [ -f /tmp/restart-clamd ]; then continue; fi; exit $$clamd_status; done"]
+    user: "100:101"
+    volumes:
+      - clamav-signatures:/var/lib/clamav
+      - clamav-socket:/run/clamav
+      - ./infra/compose/clamd.conf:/etc/clamav/clamd.runtime.conf:ro
+    networks: [platform, scanner-egress]
+    read_only: true
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,size=64m"
+      - "/var/log/clamav:rw,nosuid,size=16m,uid=100,gid=101,mode=0770"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 1.0
+    depends_on:
+      clamav-socket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # Socket creation happens only after freshclam has produced a usable
+      # signature database and clamd has started; scanner clients still apply
+      # their own bounded protocol deadline and fail closed.
+      test: ["CMD-SHELL", "test -S /run/clamav/clamd.sock || { ls -la /run/clamav >&2; exit 1; }"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
   minio-init:
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
     entrypoint: ["/bin/sh", "/infra/compose/minio-init.sh"]
@@ -50,6 +104,10 @@ services:
       S3_BUCKET_QUARANTINE: ${S3_BUCKET_QUARANTINE:?set in infra/env/.env.local}
       S3_BUCKET_CLEAN: ${S3_BUCKET_CLEAN:?set in infra/env/.env.local}
       S3_BUCKET_DERIVED: ${S3_BUCKET_DERIVED:?set in infra/env/.env.local}
+      MINIO_API_ACCESS_KEY: ${MINIO_API_ACCESS_KEY:?set in infra/env/.env.local}
+      MINIO_API_SECRET_KEY: ${MINIO_API_SECRET_KEY:?set in infra/env/.env.local}
+      MINIO_WORKER_ACCESS_KEY: ${MINIO_WORKER_ACCESS_KEY:?set in infra/env/.env.local}
+      MINIO_WORKER_SECRET_KEY: ${MINIO_WORKER_SECRET_KEY:?set in infra/env/.env.local}
     volumes:
       - ./infra:/infra:ro
     networks: [platform]
@@ -83,6 +141,8 @@ services:
       PGDATABASE: ${POSTGRES_DB:?set in infra/env/.env.local}
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:?set in infra/env/.env.local}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set in infra/env/.env.local}
+      POSTGRES_WORKER_USER: ${POSTGRES_WORKER_USER:?set in infra/env/.env.local}
+      POSTGRES_WORKER_PASSWORD: ${POSTGRES_WORKER_PASSWORD:?set in infra/env/.env.local}
     volumes:
       - ./infra:/infra:ro
     networks: [platform]
@@ -129,13 +189,25 @@ services:
     build:
       context: .
       dockerfile: infra/containers/Dockerfile.worker
-    env_file: ${EVIDENCE_LOOP_RUNTIME_ENV_FILE:-infra/env/.env.runtime.local}
+    env_file: ${EVIDENCE_LOOP_WORKER_RUNTIME_ENV_FILE:-infra/env/.env.worker.runtime.local}
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 128
+    mem_limit: 512m
+    group_add: ["101"]
+    volumes:
+      - clamav-socket:/run/clamav:ro
+      - clamav-signatures:/var/lib/clamav:ro
     networks: [platform]
     depends_on:
       db-role-init:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "/app/infra/runtime/readiness.mjs", "worker"]
       interval: 10s
@@ -147,7 +219,11 @@ services:
 networks:
   platform:
     internal: true
+  # Only signature refresh traffic leaves the internal workload network.
+  scanner-egress: {}
 
 volumes:
   postgres-data:
   minio-data:
+  clamav-signatures:
+  clamav-socket:
