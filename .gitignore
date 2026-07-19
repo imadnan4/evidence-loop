@@ -11,6 +11,7 @@ yarn-error.log*
 .env.*
 !.env.example
 !infra/env/.env.runtime.example
+!infra/env/.env.worker.runtime.example
 # Compose credentials are generated locally; never commit a runnable environment.
 infra/env/.env.local
 dist/

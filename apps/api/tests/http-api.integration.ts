@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -64,6 +64,18 @@ let application: Sql<{}>;
 let app: ReturnType<typeof buildApp>;
 let signToken: (subject: string, organizationId: string) => Promise<string>;
 let closeJwks: () => Promise<void>;
+const quarantineObjects = new Map<string, Buffer>();
+const artifactStorage = {
+  putQuarantine: async (key: string, bytes: Buffer) => { quarantineObjects.set(key, Buffer.from(bytes)); },
+  readQuarantine: async (key: string) => {
+    const bytes = quarantineObjects.get(key);
+    if (!bytes) throw new Error("missing synthetic quarantine object");
+    return Buffer.from(bytes);
+  },
+  deleteQuarantine: async (key: string) => { quarantineObjects.delete(key); },
+  putClean: async () => undefined,
+  putDerived: async () => undefined,
+};
 
 test.before(async () => {
   const baseUrl = await databaseUrl();
@@ -75,6 +87,7 @@ test.before(async () => {
   await databaseAdmin.unsafe(`CREATE ROLE ${role} LOGIN PASSWORD '${password}' NOINHERIT`);
   await databaseAdmin.unsafe(`GRANT USAGE ON SCHEMA public TO ${role}`);
   await databaseAdmin.unsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${role}`);
+  await databaseAdmin.unsafe(`GRANT EXECUTE ON FUNCTION complete_artifact_upload(uuid, uuid, uuid, uuid, text, text, text) TO ${role}`);
   application = postgres(rewriteDatabase(baseUrl, isolatedDatabase, role, password), { max: 1, prepare: false });
 
   await databaseAdmin`
@@ -118,6 +131,7 @@ test.before(async () => {
       syntheticDataOnly: true,
     },
     client: application,
+    artifactStorage,
   });
 });
 
@@ -235,6 +249,75 @@ test("B02 durable assessment API enforces tenant membership, idempotency, public
     () => databaseAdmin`INSERT INTO assessment_objectives (organization_id, assessment_id, assessment_version_id, position, label, description, evidence_criteria, assessable_in_check_in, approved_by) VALUES (${organizationA}, ${assessmentId}, ${versionId}, 4, 'Late objective', 'Should fail', 'Should fail', true, ${userA})`,
     /immutable/,
   );
+});
+
+
+test("B04 keeps durable uploads private, one-use, and learner scoped", async () => {
+  const learner = randomUUID();
+  const secondLearner = randomUUID();
+  const assessmentId = randomUUID();
+  const versionId = randomUUID();
+  await databaseAdmin`INSERT INTO internal_users (id, organization_id, subject) VALUES (${learner}, ${organizationA}, 'issuer|b04-learner'), (${secondLearner}, ${organizationA}, 'issuer|b04-other')`;
+  await databaseAdmin`INSERT INTO course_memberships (course_id, user_id, organization_id, role) VALUES (${courseA}, ${learner}, ${organizationA}, 'learner'), (${courseA}, ${secondLearner}, ${organizationA}, 'learner')`;
+  await databaseAdmin`INSERT INTO assessments (id, organization_id, course_id, title, state) VALUES (${assessmentId}, ${organizationA}, ${courseA}, 'B04 private upload', 'published')`;
+  await databaseAdmin`
+    INSERT INTO assessment_versions (id, organization_id, course_id, assessment_id, version_number, state, title, assignment_instructions, learner_facing_text, ai_use_policy, privacy_summary, completion_criteria, text_check_in, voice_check_in, extra_time, pause_and_resume, alternative_assessment_request, question_budget, time_budget_minutes, created_by, published_by, published_at)
+    VALUES (${versionId}, ${organizationA}, ${courseA}, ${assessmentId}, 1, 'published', 'B04 version', 'Synthetic instructions.', 'Synthetic policy.', 'allowed', 'Synthetic privacy.', 'Synthetic completion.', true, false, false, true, true, 3, 3, ${userA}, ${userA}, now())`;
+  await databaseAdmin`UPDATE assessments SET current_published_version_id=${versionId} WHERE id=${assessmentId}`;
+  const learnerToken = await signToken("issuer|b04-learner", organizationA);
+  const otherToken = await signToken("issuer|b04-other", organizationA);
+  const staffToken = await signToken("issuer|learner-a", organizationA);
+  const submissionHeaders = { authorization: `Bearer ${learnerToken}`, "idempotency-key": "b04-submission-key-0001" };
+  const submission = await app.inject({ method: "POST", url: `/v1/assessment-versions/${versionId}/submissions`, headers: submissionHeaders });
+  assert.equal(submission.statusCode, 201);
+  const submissionId = submission.json().submission_id as string;
+  const submissionReplay = await app.inject({ method: "POST", url: `/v1/assessment-versions/${versionId}/submissions`, headers: submissionHeaders });
+  assert.equal(submissionReplay.statusCode, 200);
+  assert.equal(submissionReplay.json().submission_id, submissionId);
+
+  const bytes = Buffer.from("hello", "utf8");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const intentPayload = { file_name: "private.txt", content_type: "text/plain", byte_size: bytes.length, sha256: digest };
+  const intentHeaders = { authorization: `Bearer ${learnerToken}`, "idempotency-key": "b04-intent-key-00000001" };
+  const intent = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/artifacts/upload-intents`, headers: intentHeaders, payload: intentPayload });
+  assert.equal(intent.statusCode, 201);
+  const intentBody = intent.json();
+  assert.ok(typeof intentBody.upload_capability === "string" && intentBody.upload_capability.length >= 32);
+  for (const forbidden of ["bucket", "key", "url", "filename", "sha256", "content"]) assert.ok(!Object.hasOwn(intentBody, forbidden));
+  const intentReplay = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/artifacts/upload-intents`, headers: intentHeaders, payload: intentPayload });
+  assert.equal(intentReplay.statusCode, 200);
+  assert.equal(intentReplay.json().upload_intent_id, intentBody.upload_intent_id);
+  assert.equal(intentReplay.json().upload_capability, intentBody.upload_capability);
+  const intentConflict = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/artifacts/upload-intents`, headers: intentHeaders, payload: { ...intentPayload, sha256: "f".repeat(64) } });
+  assert.equal(intentConflict.statusCode, 409);
+
+  const uploadHeaders = { authorization: `Bearer ${learnerToken}`, "upload-capability": intentBody.upload_capability, "idempotency-key": "b04-upload-key-00000001", "content-type": "application/octet-stream" };
+  const uploaded = await app.inject({ method: "PUT", url: `/v1/artifact-upload-intents/${intentBody.upload_intent_id}/content`, headers: uploadHeaders, payload: bytes });
+  assert.equal(uploaded.statusCode, 201);
+  const uploadedBody = uploaded.json();
+  assert.equal(uploadedBody.status, "uploaded");
+  const uploadReplay = await app.inject({ method: "PUT", url: `/v1/artifact-upload-intents/${intentBody.upload_intent_id}/content`, headers: uploadHeaders, payload: bytes });
+  assert.equal(uploadReplay.statusCode, 200);
+  assert.equal(uploadReplay.json().artifact_id, uploadedBody.artifact_id);
+  const otherUpload = await app.inject({ method: "PUT", url: `/v1/artifact-upload-intents/${intentBody.upload_intent_id}/content`, headers: { ...uploadHeaders, authorization: `Bearer ${otherToken}`, "idempotency-key": "b04-other-upload-key-01" }, payload: bytes });
+  assert.equal(otherUpload.statusCode, 404);
+  const otherStatus = await app.inject({ method: "GET", url: `/v1/submissions/${submissionId}/artifacts/${uploadedBody.artifact_id}`, headers: { authorization: `Bearer ${otherToken}` } });
+  assert.equal(otherStatus.statusCode, 404);
+  const staffStatus = await app.inject({ method: "GET", url: `/v1/submissions/${submissionId}/artifacts/${uploadedBody.artifact_id}`, headers: { authorization: `Bearer ${staffToken}` } });
+  assert.equal(staffStatus.statusCode, 200);
+  const status = staffStatus.json();
+  assert.deepEqual(status, { artifact_id: uploadedBody.artifact_id, status: "uploaded", reason_code: null });
+  for (const forbidden of ["quarantine_key", "clean_key", "derived_key", "filename", "sha256", "content", "url", "fragment_count", "created_at", "updated_at", "byte_size"]) assert.ok(!Object.hasOwn(status, forbidden));
+
+  const expiring = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/artifacts/upload-intents`, headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": "b04-expiring-intent-0001" }, payload: intentPayload });
+  assert.equal(expiring.statusCode, 201);
+  await databaseAdmin`UPDATE artifact_upload_intents SET expires_at=now()-interval '1 second' WHERE id=${expiring.json().upload_intent_id}`;
+  const expired = await app.inject({ method: "PUT", url: `/v1/artifact-upload-intents/${expiring.json().upload_intent_id}/content`, headers: { authorization: `Bearer ${learnerToken}`, "upload-capability": expiring.json().upload_capability, "idempotency-key": "b04-expired-upload-0001", "content-type": "application/octet-stream" }, payload: bytes });
+  assert.equal(expired.statusCode, 409);
+  const mismatched = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/artifacts/upload-intents`, headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": "b04-mismatch-intent-0001" }, payload: { ...intentPayload, byte_size: 6 } });
+  assert.equal(mismatched.statusCode, 201);
+  const badBytes = await app.inject({ method: "PUT", url: `/v1/artifact-upload-intents/${mismatched.json().upload_intent_id}/content`, headers: { authorization: `Bearer ${learnerToken}`, "upload-capability": mismatched.json().upload_capability, "idempotency-key": "b04-mismatch-upload-000", "content-type": "application/octet-stream" }, payload: bytes });
+  assert.equal(badBytes.statusCode, 400);
 });
 
 test("B02 rolls back domain, audit, outbox, and idempotency effects on a failed durable write", async () => {

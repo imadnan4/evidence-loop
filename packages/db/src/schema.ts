@@ -94,6 +94,12 @@ export const rubricCriteria = pgTable("rubric_criteria", { id:uuid("id").default
 export const rubricCriterionObjectives = pgTable("rubric_criterion_objectives", { organizationId:uuid("organization_id").notNull(),assessmentVersionId:uuid("assessment_version_id").notNull(),criterionId:uuid("criterion_id").notNull(),objectiveId:uuid("objective_id").notNull() },t=>[primaryKey({columns:[t.criterionId,t.objectiveId],name:"rubric_criterion_objectives_pkey"})]);
 export const idempotencyResults = pgTable("idempotency_results", { organizationId:uuid("organization_id").notNull(),operation:text("operation").notNull(),key:text("key").notNull(),targetType:text("target_type").notNull(),targetId:uuid("target_id").notNull(),createdAt },t=>[primaryKey({columns:[t.organizationId,t.operation,t.key],name:"idempotency_results_pkey"})]);
 
+export const submissions = pgTable("submissions", { id:uuid("id").defaultRandom().primaryKey(), organizationId:uuid("organization_id").notNull(), courseId:uuid("course_id").notNull(), assessmentId:uuid("assessment_id").notNull(), assessmentVersionId:uuid("assessment_version_id").notNull(), learnerId:uuid("learner_id").notNull(), state:text("state").notNull().default("uploading"), createdAt, updatedAt:timestamp("updated_at",{withTimezone:true}).notNull().defaultNow() });
+export const artifacts = pgTable("artifacts", { id:uuid("id").defaultRandom().primaryKey(), organizationId:uuid("organization_id").notNull(), submissionId:uuid("submission_id").notNull(), quarantineKey:text("quarantine_key").notNull(), cleanKey:text("clean_key"), derivedKey:text("derived_key"), declaredExtension:text("declared_extension").notNull(), declaredContentType:text("declared_content_type").notNull(), byteSize:integer("byte_size").notNull(), sha256:text("sha256").notNull(), status:text("status").notNull(), failureCode:text("failure_code"), scannerVersion:text("scanner_version"), parserVersion:text("parser_version"), scanCompletedAt:timestamp("scan_completed_at",{withTimezone:true}), parsedAt:timestamp("parsed_at",{withTimezone:true}), createdAt, updatedAt:timestamp("updated_at",{withTimezone:true}).notNull().defaultNow() });
+export const artifactUploadIntents = pgTable("artifact_upload_intents", { id:uuid("id").defaultRandom().primaryKey(), organizationId:uuid("organization_id").notNull(), submissionId:uuid("submission_id").notNull(), artifactId:uuid("artifact_id").notNull(), actorId:uuid("actor_id").notNull(), tokenDigest:text("token_digest").notNull(), expectedByteSize:integer("expected_byte_size").notNull(), expectedSha256:text("expected_sha256").notNull(), expiresAt:timestamp("expires_at",{withTimezone:true}).notNull(), consumedAt:timestamp("consumed_at",{withTimezone:true}), expiredAt:timestamp("expired_at",{withTimezone:true}), createdAt });
+export const artifactEvents = pgTable("artifact_events", { id:uuid("id").defaultRandom().primaryKey(), organizationId:uuid("organization_id").notNull(), artifactId:uuid("artifact_id").notNull(), eventType:text("event_type").notNull(), reasonCode:text("reason_code"), attempt:integer("attempt").notNull().default(0), scannerVersion:text("scanner_version"), parserVersion:text("parser_version"), createdAt });
+export const artifactFragments = pgTable("artifact_fragments", { id:uuid("id").defaultRandom().primaryKey(), organizationId:uuid("organization_id").notNull(), submissionId:uuid("submission_id").notNull(), artifactId:uuid("artifact_id").notNull(), ordinal:integer("ordinal").notNull(), locator:jsonb("locator").notNull(), contentType:text("content_type").notNull(), content:text("content").notNull(), contentHash:text("content_hash").notNull(), parserVersion:text("parser_version").notNull(), createdAt });
+
 export const outboxEvents = pgTable("outbox_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   organizationId: uuid("organization_id").notNull().references(() => organizations.id),
@@ -104,6 +110,12 @@ export const outboxEvents = pgTable("outbox_events", {
   createdAt,
   availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
   processedAt: timestamp("processed_at", { withTimezone: true }),
+  dedupeKey: text("dedupe_key"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  lockedAt: timestamp("locked_at", { withTimezone: true }),
+  lockedBy: text("locked_by"),
+  lastErrorCode: text("last_error_code"),
+  deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
 }, (table) => [
   check("outbox_events_aggregate_type_check", sql`char_length(${table.aggregateType}) BETWEEN 1 AND 128`),
   check("outbox_events_topic_check", sql`char_length(${table.topic}) BETWEEN 1 AND 128`),

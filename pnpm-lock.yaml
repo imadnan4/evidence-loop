@@ -17,6 +17,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@evidence-loop/artifact-pipeline':
+        specifier: workspace:*
+        version: link:../../packages/artifact-pipeline
       '@evidence-loop/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -49,6 +52,20 @@ importers:
         version: 3.4.7
 
   apps/web: {}
+
+  apps/worker:
+    dependencies:
+      '@evidence-loop/artifact-pipeline':
+        specifier: workspace:*
+        version: link:../../packages/artifact-pipeline
+      '@evidence-loop/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      postgres:
+        specifier: 3.4.7
+        version: 3.4.7
+
+  packages/artifact-pipeline: {}
 
   packages/config: {}
 

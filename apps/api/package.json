@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@evidence-loop/artifact-pipeline": "workspace:*",
     "@evidence-loop/config": "workspace:*",
     "@evidence-loop/contracts": "workspace:*",
     "@evidence-loop/db": "workspace:*",
@@ -16,7 +17,7 @@
     "postgres": "3.4.7"
   },
   "scripts": {
-    "check": "pnpm run typecheck && node --test tests/assessment-authoring.test.ts tests/artifact-provenance.test.ts tests/session-state-machine.test.ts tests/ai-orchestration.test.js tests/voice-realtime.test.js tests/oidc-jwt.test.ts tests/http-api.test.ts",
+    "check": "pnpm run typecheck && node --test tests/assessment-authoring.test.ts tests/artifact-provenance.test.ts tests/artifact-durable-service.test.ts tests/session-state-machine.test.ts tests/ai-orchestration.test.js tests/voice-realtime.test.js tests/oidc-jwt.test.ts tests/http-api.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node --experimental-strip-types src/main.ts",
     "migrate": "node --experimental-strip-types src/migrate.ts"

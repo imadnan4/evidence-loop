@@ -1,7 +1,14 @@
 FROM node:24.12.0-bookworm-slim
-
 WORKDIR /app
-COPY --chown=node:node pnpm-lock.yaml package.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/config/package.json packages/config/tsconfig.base.json ./packages/config/
+COPY packages/db/package.json packages/db/tsconfig.json ./packages/db/
+COPY packages/db/src ./packages/db/src
+COPY packages/artifact-pipeline/package.json packages/artifact-pipeline/tsconfig.json ./packages/artifact-pipeline/
+COPY packages/artifact-pipeline/src ./packages/artifact-pipeline/src
+COPY apps/worker/package.json apps/worker/tsconfig.json ./apps/worker/
+RUN corepack enable && pnpm install --frozen-lockfile --filter @evidence-loop/worker...
+COPY --chown=node:node apps/worker/src ./apps/worker/src
 COPY --chown=node:node infra/runtime ./infra/runtime
 USER node
-CMD ["node", "infra/runtime/worker-platform-probe.mjs"]
+CMD ["node", "--experimental-strip-types", "apps/worker/src/main.ts"]

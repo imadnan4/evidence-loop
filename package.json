@@ -11,7 +11,7 @@
     "check": "pnpm run check:all",
     "check:contracts": "pnpm --filter @evidence-loop/contracts check",
     "format:check": "node scripts/check-format.mjs",
-    "typecheck": "pnpm --filter @evidence-loop/config typecheck && pnpm --filter @evidence-loop/db typecheck && pnpm --filter @evidence-loop/api typecheck",
+    "typecheck": "pnpm --filter @evidence-loop/config typecheck && pnpm --filter @evidence-loop/db typecheck && pnpm --filter @evidence-loop/artifact-pipeline typecheck && pnpm --filter @evidence-loop/api typecheck && pnpm --filter @evidence-loop/worker typecheck",
     "test": "node scripts/check-workspace.mjs",
     "check:all": "pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run validate:env-example && pnpm run compose:config",
     "validate:env-example": "node scripts/validate-env-example.mjs",
