@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { initialiseInstructorReview } from "../assets/instructor-review.js";
+import { initialiseInstructorReview } from "../public/demo/assets/instructor-review.js";
 
 class FakeElement {
   constructor({ dataset = {}, value = "" } = {}) {
@@ -151,7 +151,7 @@ test("each human action reports an unsaved local synthetic-demo action", () => {
 });
 
 test("review interaction script makes no network request or HTML injection sink", async () => {
-  const script = await readFile(new URL("../assets/instructor-review.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../public/demo/assets/instructor-review.js", import.meta.url), "utf8");
   assert.doesNotMatch(script, /\b(fetch|XMLHttpRequest)\s*\(/);
   assert.doesNotMatch(script, /\.innerHTML\b/);
   assert.match(script, /sourceExcerpt\.textContent/);

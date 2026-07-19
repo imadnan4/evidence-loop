@@ -7,7 +7,6 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 const appRoot = resolve(import.meta.dirname, "..");
-const uiRoot = resolve(appRoot, "../../packages/ui/src");
 const questions = [
   "How did you prepare the data before fitting the model?",
   "How did you keep scaling from leaking information?",
@@ -32,16 +31,22 @@ async function startTestServer({ timeBudgetReached = false, retryVoiceSubmit = f
   const voiceSubmissions = new Map();
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
-    if (url.pathname === "/learner/") return response.end(await readFile(resolve(appRoot, "learner/index.html")));
+    if (url.pathname === "/demo/learner/") return response.end(await readFile(resolve(appRoot, "public/demo/learner/index.html")));
+    if (url.pathname.startsWith("/demo/assets/")) {
+      const name = url.pathname.slice("/demo/assets/".length);
+      const type = name.endsWith(".css") ? "text/css" : "text/javascript";
+      response.writeHead(200, { "Content-Type": type });
+      return response.end(await readFile(resolve(appRoot, "public/demo/assets", name)));
+    }
     if (url.pathname.startsWith("/assets/")) {
       const name = url.pathname.slice("/assets/".length);
       const type = name.endsWith(".css") ? "text/css" : "text/javascript";
       response.writeHead(200, { "Content-Type": type });
-      return response.end(await readFile(resolve(appRoot, "assets", name)));
+      return response.end(await readFile(resolve(appRoot, "public/assets", name)));
     }
     if (url.pathname.startsWith("/ui/")) {
       response.writeHead(200, { "Content-Type": "text/css" });
-      return response.end(await readFile(resolve(uiRoot, url.pathname.slice("/ui/".length))));
+      return response.end(await readFile(resolve(appRoot, "public/ui", url.pathname.slice("/ui/".length))));
     }
     if (!url.pathname.startsWith("/check-ins/session-browser/")) return response.writeHead(404).end();
     const operation = url.pathname.slice("/check-ins/session-browser/".length);
@@ -129,7 +134,7 @@ async function waitFor(check, message) {
   throw new Error(message);
 }
 
-async function startBrowser(origin, learnerPath = "/learner/?session=session-browser") {
+async function startBrowser(origin, learnerPath = "/demo/learner/?session=session-browser") {
   const port = 9300 + Math.floor(Math.random() * 500);
   const process = spawn("chromium", ["--headless", "--no-sandbox", "--disable-gpu", `--remote-debugging-port=${port}`, `--user-data-dir=${resolve(tmpdir(), `evidence-loop-${port}`)}`, "about:blank"], { stdio: "ignore" });
   await waitFor(async () => {
@@ -199,7 +204,7 @@ async function openFlow(context, options) {
 
 test("learner sees a plain-language error without a course-provided session", { timeout: 30_000 }, async (context) => {
   const { server, origin } = await startTestServer();
-  const browser = await startBrowser(origin, "/learner/");
+  const browser = await startBrowser(origin, "/demo/learner/");
   context.after(async () => {
     browser.socket.close();
     browser.process.kill();

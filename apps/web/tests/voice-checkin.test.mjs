@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { F07aVoiceApi, RealtimeVoiceTransport, VoiceTransportError } from "../assets/voice-checkin.js";
+import { F07aVoiceApi, RealtimeVoiceTransport, VoiceTransportError } from "../public/demo/assets/voice-checkin.js";
 
 function response(body, options = {}) {
   return new Response(JSON.stringify(body), { status: options.status ?? 200, headers: { "Content-Type": "application/json" } });

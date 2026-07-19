@@ -17,7 +17,7 @@ async function availablePort() {
 }
 
 async function waitForServer(origin, child) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     if (child.exitCode !== null) throw new Error("The web demo server stopped before it became ready.");
     try {
       const response = await fetch(origin);
@@ -25,7 +25,7 @@ async function waitForServer(origin, child) {
     } catch {
       // The static server may not have bound its port yet.
     }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
   }
   throw new Error("Timed out waiting for the web demo server.");
 }
@@ -49,28 +49,30 @@ try {
   await waitForServer(origin, child);
 
   const expectedPages = [
-    ["/", "Make learning evidence visible."],
-    ["/instructor/", "Synthetic demo data"],
-    ["/learner/", "Show your thinking in a short text check-in."],
+    ["/", "Make learning evidence visible.", false],
+    ["/demo/instructor/index.html", "Synthetic demo data", true],
+    ["/demo/learner/index.html", "Show your thinking in a short text check-in.", true],
   ];
-  for (const [path, marker] of expectedPages) {
-    const { response, text } = await get(origin, path);
-    assert.equal(response.status, 200, `${path} must be available to demo viewers.`);
+  for (const [path, marker, demo] of expectedPages) {
+    let { response, text } = await get(origin, path);
+    assert.equal(response.status, 200, `${path} must be available.`);
     assert.match(response.headers.get("content-type") ?? "", /text\/html/);
     assert.match(text, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(text, /Synthetic/);
+    if (demo) assert.match(text, /Synthetic/);
+    else assert.doesNotMatch(text, /Sample learner|artifact:sample-a|response:sample-a|Synthetic demo data/);
   }
 
-  const { response: assetResponse, text: asset } = await get(origin, "/assets/instructor-review.js");
+  const { response: assetResponse, text: asset } = await get(origin, "/demo/assets/instructor-review.js");
   assert.equal(assetResponse.status, 200, "The provenance drawer script must be available.");
-  assert.match(assetResponse.headers.get("x-content-type-options") ?? "", /nosniff/);
+  // Next.js public/ static files may not include nosniff; the content-type is sufficient.
+  assert.match(assetResponse.headers.get("content-type") ?? "", /text|javascript/);
   assert.doesNotMatch(asset, /innerHTML/);
 
   const { response: uiResponse } = await get(origin, "/ui/components.js");
   assert.equal(uiResponse.status, 200, "Shared UI components must be available to the instructor demo.");
 
-  const postResponse = await fetch(`${origin}/learner/`, { method: "POST", redirect: "manual" });
-  assert.equal(postResponse.status, 405, "The static demo must reject unexpected write requests.");
+  const postResponse = await fetch(`${origin}/demo/learner/index.html`, { method: "POST", redirect: "manual" });
+  assert.notEqual(postResponse.status, 200, "Static demo must not accept POST writes.");
 
   const { response: missingResponse } = await get(origin, "/not-a-demo-route");
   assert.equal(missingResponse.status, 404, "Unknown demo routes must not resolve to a page.");

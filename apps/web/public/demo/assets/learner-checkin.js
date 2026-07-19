@@ -1,5 +1,5 @@
-import { F04aSessionApi, SessionApiError } from "/assets/learner-session-api.js";
-import { F07aVoiceApi, RealtimeVoiceTransport, VoiceTransportError } from "/assets/voice-checkin.js";
+import { F04aSessionApi, SessionApiError } from "/demo/assets/learner-session-api.js";
+import { F07aVoiceApi, RealtimeVoiceTransport, VoiceTransportError } from "/demo/assets/voice-checkin.js";
 
 const sessionId = new URLSearchParams(window.location.search).get("session");
 const api = new F04aSessionApi();
