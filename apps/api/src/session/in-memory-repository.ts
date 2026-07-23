@@ -92,6 +92,9 @@ export class InMemorySessionRepository implements SessionRepository {
     this.transcripts.set(commit.transcript.responseId, structuredClone(commit.transcript));
     await this.saveResponse(structuredClone(commit.response));
     await this.saveSession(structuredClone(commit.session));
+    if (commit.nextQuestion) {
+      await this.saveQuestion(structuredClone(commit.nextQuestion));
+    }
     for (const event of commit.events) {
       const list = this.events.get(event.sessionId) ?? [];
       list.push(structuredClone(event));

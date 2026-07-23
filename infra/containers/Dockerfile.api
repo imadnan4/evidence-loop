@@ -11,11 +11,7 @@ COPY packages/artifact-pipeline/package.json packages/artifact-pipeline/tsconfig
 COPY packages/artifact-pipeline/src ./packages/artifact-pipeline/src
 COPY apps/api/package.json apps/api/tsconfig.json ./apps/api/
 RUN corepack enable && pnpm install --frozen-lockfile --filter @evidence-loop/api...
-COPY apps/api/src/auth ./apps/api/src/auth
-COPY apps/api/src/assessment ./apps/api/src/assessment
-COPY apps/api/src/artifacts ./apps/api/src/artifacts
-COPY apps/api/src/http ./apps/api/src/http
-COPY apps/api/src/main.ts ./apps/api/src/main.ts
+COPY apps/api/src ./apps/api/src
 USER node
 EXPOSE 3001
 CMD ["node", "--experimental-strip-types", "apps/api/src/main.ts"]
