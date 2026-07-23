@@ -10,9 +10,15 @@ const storage = new PrivateS3Storage({ endpoint: new URL(required("S3_ENDPOINT")
 const clamdSocket = process.env.CLAMD_SOCKET;
 const clamdSignatureDirectory = process.env.CLAMD_SIGNATURE_DIRECTORY;
 const clamdMaxSignatureAgeSeconds = Number(process.env.CLAMD_MAX_SIGNATURE_AGE_SECONDS ?? "86400");
-const scanner = clamdSocket && clamdSignatureDirectory && Number.isSafeInteger(clamdMaxSignatureAgeSeconds)
-  ? new ClamAvSocketScanner({ socketPath: clamdSocket, signatureDirectory: clamdSignatureDirectory, maxSignatureAgeMs: clamdMaxSignatureAgeSeconds * 1000 })
-  : new UnavailableScanner();
+function buildScanner() {
+  if (!clamdSocket || !clamdSignatureDirectory || !Number.isSafeInteger(clamdMaxSignatureAgeSeconds)) return new UnavailableScanner();
+  try {
+    return new ClamAvSocketScanner({ socketPath: clamdSocket, signatureDirectory: clamdSignatureDirectory, maxSignatureAgeMs: clamdMaxSignatureAgeSeconds * 1000 });
+  } catch {
+    return new UnavailableScanner();
+  }
+}
+const scanner = buildScanner();
 const parser = new UnavailableParser(); // No parser exists until an approved isolated sandbox is deployed.
 const workerName = `artifact-${randomUUID()}`;
 

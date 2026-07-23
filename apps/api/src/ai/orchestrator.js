@@ -137,6 +137,7 @@ export class AiOrchestrator {
 
   async #run({ operation, inputObjectIds, prompt, validate }) {
     const startedAt = this.#clock();
+    let output;
     try {
       const rawOutput = await this.#modelClient.generateStructured(Object.freeze({
         operation,
@@ -147,9 +148,7 @@ export class AiOrchestrator {
         // A fixed operation intentionally has no `tools`, `webSearch`, or
         // executable context fields. Provider adapters must honor this shape.
       }));
-      const output = validate(rawOutput);
-      await this.#record({ operation, inputObjectIds, outcome: "accepted", startedAt });
-      return output;
+      output = validate(rawOutput);
     } catch (error) {
       const validationError = error instanceof AiValidationError;
       await this.#record({
@@ -161,6 +160,8 @@ export class AiOrchestrator {
       });
       throw error;
     }
+    await this.#record({ operation, inputObjectIds, outcome: "accepted", startedAt });
+    return output;
   }
 
   async #record({ operation, inputObjectIds, outcome, failureMode = null, startedAt }) {

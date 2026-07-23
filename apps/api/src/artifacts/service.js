@@ -138,9 +138,13 @@ export class ArtifactNormalizationJob {
       if (sha256(bytes) !== artifact.checksum) throw new Error("Original checksum mismatch");
       const scan = await this.#scanner.scan({ artifactId, bytes: Buffer.from(bytes), contentType: artifact.contentType });
       if (!assertCleanScan(scan)) {
-        await this.#storage.deletePrivate(artifact.storageKey);
-        await this.#repository.setRuntime(artifactId, { status: "rejected", errorCode: scan.verdict === "infected" ? "malware_detected" : "scanner_failed", scan });
-        return { artifactId, status: "rejected" };
+        if (scan.verdict === "infected") {
+          await this.#storage.deletePrivate(artifact.storageKey);
+          await this.#repository.setRuntime(artifactId, { status: "rejected", errorCode: "malware_detected", scan });
+          return { artifactId, status: "rejected" };
+        }
+        await this.#repository.setRuntime(artifactId, { status: "blocked", errorCode: "scanner_failed", scan });
+        return { artifactId, status: "blocked" };
       }
       await this.#repository.setRuntime(artifactId, { status: "normalizing", scan });
       const fragments = await this.#parserSandbox.normalize({ artifact, bytes: Buffer.from(bytes) });

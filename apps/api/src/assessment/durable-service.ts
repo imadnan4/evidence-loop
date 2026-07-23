@@ -54,6 +54,11 @@ export class DurableAssessmentService {
         await inner`INSERT INTO idempotency_results (organization_id,operation,key,target_type,target_id) VALUES (${principal.organizationId},${operation},${idempotencyKey},'assessment',${assessmentId})`;
       }});
       return {replayed:false,status:201,assessment_id:assessmentId,draft:await loadVersion(tx,principal.organizationId,versionId)};
+    }).catch((error) => {
+      if (error instanceof IdempotencyConflictError) {
+        throw new AssessmentHttpError(409, "idempotency_conflict", "Idempotency key conflicts with a different request.");
+      }
+      throw error;
     });
   }
   async publish(principal:Principal,versionId:string,header:string|undefined) {

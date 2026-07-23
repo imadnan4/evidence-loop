@@ -6,7 +6,15 @@ const BUCKET=/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/; const CLAIM=/^[A-Za-z][A-Za-z
 export class EnvironmentError extends Error { readonly variable:string; readonly code:string; constructor(variable:string,code:string){super(`${variable}: ${code}`);this.variable=variable;this.code=code} }
 function value(s:Environment,k:string){const v=s[k]?.trim();if(!v)throw new EnvironmentError(k,"required");return v}
 function url(s:Environment,k:string){try{return new URL(value(s,k))}catch{throw new EnvironmentError(k,"invalid-url")}}
-function loopback(v:URL){return ["localhost","127.0.0.1","::1"].includes(v.hostname)}
+function loopback(v:URL){
+  if (["localhost","::1","[::1]","0:0:0:0:0:0:0:1"].includes(v.hostname)) return true;
+  if (/^127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/.test(v.hostname)) {
+    const octets = v.hostname.split(".").map(Number);
+    return octets[0] === 127 && octets.every(o => o >= 0 && o <= 255);
+  }
+  if (/^::ffff:127\./.test(v.hostname)) return true;
+  return false;
+}
 function http(v:URL){return v.protocol==="http:"||v.protocol==="https:"}
 function profile(s:Environment):RuntimeProfile {const v=value(s,"EVIDENCE_LOOP_ENV");if(v==="local"||v==="ci"||v==="staging")return v;throw new EnvironmentError("EVIDENCE_LOOP_ENV","unsupported-profile")}
 function origins(s:Environment,p:RuntimeProfile){const all=value(s,"ALLOWED_WEB_ORIGINS").split(",").map(x=>{try{return new URL(x.trim())}catch{throw new EnvironmentError("ALLOWED_WEB_ORIGINS","invalid-url")}});if(!all.length||all.some(x=>!http(x)||(p==="staging"&&(x.protocol!=="https:"||loopback(x)))))throw new EnvironmentError("ALLOWED_WEB_ORIGINS","invalid-origin");return Object.freeze(all)}

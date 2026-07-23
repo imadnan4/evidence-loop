@@ -20,6 +20,6 @@
     "check": "pnpm run typecheck && node --test tests/assessment-authoring.test.ts tests/artifact-provenance.test.ts tests/artifact-durable-service.test.ts tests/session-state-machine.test.ts tests/ai-orchestration.test.js tests/voice-realtime.test.js tests/oidc-jwt.test.ts tests/http-api.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node --experimental-strip-types src/main.ts",
-    "migrate": "node --experimental-strip-types src/migrate.ts"
+    "migrate": "pnpm --filter @evidence-loop/db exec node --experimental-strip-types src/migrate.ts"
   }
 }
