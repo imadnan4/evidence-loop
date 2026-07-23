@@ -1,0 +1,10 @@
+FROM node:24.12.0-bookworm-slim
+
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/db/package.json packages/db/tsconfig.json ./packages/db/
+COPY packages/db/src ./packages/db/src
+COPY packages/db/migrations ./packages/db/migrations
+RUN corepack enable && pnpm install --frozen-lockfile --filter @evidence-loop/db...
+USER node
+CMD ["node", "--experimental-strip-types", "packages/db/src/migrate.ts"]

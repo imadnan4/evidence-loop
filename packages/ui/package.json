@@ -1,0 +1,14 @@
+{
+  "name": "@evidence-loop/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./src/tokens.css",
+    "./primitives.css": "./src/primitives.css",
+    "./components": "./src/components.js"
+  },
+  "scripts": {
+    "check": "node ./scripts/check-design-system.mjs"
+  }
+}

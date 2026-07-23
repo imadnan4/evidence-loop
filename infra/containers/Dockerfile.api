@@ -1,0 +1,21 @@
+FROM node:24.12.0-bookworm-slim
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/config/package.json packages/config/tsconfig.base.json packages/config/tsconfig.json ./packages/config/
+COPY packages/config/src ./packages/config/src
+COPY packages/contracts/package.json ./packages/contracts/
+COPY packages/contracts/src ./packages/contracts/src
+COPY packages/db/package.json packages/db/tsconfig.json ./packages/db/
+COPY packages/db/src ./packages/db/src
+COPY packages/artifact-pipeline/package.json packages/artifact-pipeline/tsconfig.json ./packages/artifact-pipeline/
+COPY packages/artifact-pipeline/src ./packages/artifact-pipeline/src
+COPY apps/api/package.json apps/api/tsconfig.json ./apps/api/
+RUN corepack enable && pnpm install --frozen-lockfile --filter @evidence-loop/api...
+COPY apps/api/src/auth ./apps/api/src/auth
+COPY apps/api/src/assessment ./apps/api/src/assessment
+COPY apps/api/src/artifacts ./apps/api/src/artifacts
+COPY apps/api/src/http ./apps/api/src/http
+COPY apps/api/src/main.ts ./apps/api/src/main.ts
+USER node
+EXPOSE 3001
+CMD ["node", "--experimental-strip-types", "apps/api/src/main.ts"]

@@ -1,0 +1,19 @@
+{
+  "extends": "../../packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/auth/**/*.ts",
+    "src/http/**/*.ts",
+    "src/artifacts/**/*.ts",
+    "src/db/**/*.ts",
+    "src/main.ts",
+    "src/migrate.ts",
+    "tests/oidc-jwt.test.ts",
+    "tests/http-api.test.ts",
+    "tests/http-api.integration.ts"
+  ]
+}

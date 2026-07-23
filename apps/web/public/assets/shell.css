@@ -1,0 +1,48 @@
+@import url("/ui/primitives.css");
+
+.el-home-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(16rem, 0.65fr);
+  gap: var(--el-space-6);
+  align-items: end;
+  padding-block: clamp(var(--el-space-6), 9vw, var(--el-space-8));
+}
+
+.el-placeholder-icon {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: var(--el-space-3);
+  color: var(--el-accent-strong);
+  background: var(--el-accent-soft);
+  border-radius: var(--el-radius-md);
+  font-weight: 800;
+  place-items: center;
+}
+
+.el-placeholder-list {
+  display: grid;
+  gap: var(--el-space-3);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.el-placeholder-list li {
+  display: flex;
+  gap: var(--el-space-3);
+  align-items: flex-start;
+  padding-block: var(--el-space-3);
+  border-bottom: 1px solid var(--el-border);
+}
+.el-placeholder-list li:last-child { border-bottom: 0; }
+.el-placeholder-list strong { display: block; }
+.el-placeholder-list span { color: var(--el-text-muted); }
+
+.el-route-note { margin: 0; color: var(--el-text-muted); font-size: 0.875rem; }
+.el-breadcrumb { margin: 0 0 var(--el-space-5); color: var(--el-text-muted); font-size: 0.875rem; }
+.el-breadcrumb a { color: inherit; }
+
+@media (max-width: 48rem) {
+  .el-home-hero { grid-template-columns: 1fr; padding-block: var(--el-space-6); }
+}

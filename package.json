@@ -1,0 +1,26 @@
+{
+  "name": "evidence-loop",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.12.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "check": "pnpm run check:all",
+    "check:contracts": "pnpm --filter @evidence-loop/contracts check",
+    "format:check": "node scripts/check-format.mjs",
+    "typecheck": "pnpm --filter @evidence-loop/config typecheck && pnpm --filter @evidence-loop/db typecheck && pnpm --filter @evidence-loop/artifact-pipeline typecheck && pnpm --filter @evidence-loop/api typecheck && pnpm --filter @evidence-loop/worker typecheck",
+    "test": "node scripts/check-workspace.mjs",
+    "check:all": "pnpm run format:check && pnpm run typecheck && pnpm run test && pnpm run validate:env-example && pnpm run compose:config",
+    "validate:env-example": "node scripts/validate-env-example.mjs",
+    "compose:config": "node scripts/compose-config.mjs",
+    "compose:smoke": "node scripts/ci-compose-smoke.mjs",
+    "ci": "pnpm run check:all && pnpm run compose:smoke"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "typescript": "7.0.2"
+  }
+}

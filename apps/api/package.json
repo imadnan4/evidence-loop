@@ -1,0 +1,25 @@
+{
+  "name": "@evidence-loop/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@evidence-loop/artifact-pipeline": "workspace:*",
+    "@evidence-loop/config": "workspace:*",
+    "@evidence-loop/contracts": "workspace:*",
+    "@evidence-loop/db": "workspace:*",
+    "@fastify/cors": "11.3.0",
+    "@fastify/helmet": "13.1.0",
+    "@fastify/rate-limit": "11.1.0",
+    "fastify": "5.10.0",
+    "jose": "6.2.3",
+    "pino": "9.14.0",
+    "postgres": "3.4.7"
+  },
+  "scripts": {
+    "check": "pnpm run typecheck && node --test tests/assessment-authoring.test.ts tests/artifact-provenance.test.ts tests/artifact-durable-service.test.ts tests/session-state-machine.test.ts tests/ai-orchestration.test.js tests/voice-realtime.test.js tests/oidc-jwt.test.ts tests/http-api.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "node --experimental-strip-types src/main.ts",
+    "migrate": "pnpm --filter @evidence-loop/db exec node --experimental-strip-types src/migrate.ts"
+  }
+}
