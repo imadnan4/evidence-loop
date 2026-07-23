@@ -1,0 +1,31 @@
+# Dependencies and package-manager diagnostics.
+node_modules/
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local environment and build output.
+.env
+.env.*
+!.env.example
+!infra/env/.env.runtime.example
+!infra/env/.env.worker.runtime.example
+# Compose credentials are generated locally; never commit a runnable environment.
+infra/env/.env.local
+dist/
+coverage/
+.next/
+
+# Local-only planning, agent coordination, and skill state.
+*.md
+!README.md
+!infra/**/*.md
+docs/
+skills-lock.json
+.agents/
+
+# Preserve intentionally empty workspace directories.
+!.gitkeep
+apps/web/public/ui/

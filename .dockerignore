@@ -1,0 +1,13 @@
+.git
+.github
+.pi-subagents
+.agents
+node_modules
+**/node_modules
+.pnpm-store
+.env
+.env.*
+!infra/env/.env.example
+coverage
+dist
+.next

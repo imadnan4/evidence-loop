@@ -1,0 +1,115 @@
+/* Evidence Loop design tokens — calm, academic, and independently branded. */
+:root {
+  color-scheme: light;
+
+  --el-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --el-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --el-space-1: 0.25rem;
+  --el-space-2: 0.5rem;
+  --el-space-3: 0.75rem;
+  --el-space-4: 1rem;
+  --el-space-5: 1.5rem;
+  --el-space-6: 2rem;
+  --el-space-7: 3rem;
+  --el-space-8: 4.5rem;
+
+  --el-radius-sm: 0.375rem;
+  --el-radius-md: 0.625rem;
+  --el-radius-lg: 0.875rem;
+  --el-radius-xl: 1.25rem;
+
+  --el-canvas: #f6f7f8;
+  --el-surface: #ffffff;
+  --el-surface-subtle: #f0f2f4;
+  --el-surface-strong: #e5e8eb;
+  --el-text: #18212b;
+  --el-text-muted: #52606d;
+  --el-border: #c5cdd5;
+  --el-border-strong: #8793a0;
+
+  --el-accent: #155e8a;
+  --el-accent-strong: #0b4265;
+  --el-accent-soft: #dceef8;
+  --el-on-accent: #ffffff;
+  --el-amber: #8a5700;
+  --el-amber-soft: #fff1cf;
+  --el-danger: #b42318;
+  --el-danger-soft: #fee4e2;
+  --el-success: #176b4d;
+  --el-success-soft: #dff5e9;
+
+  --el-focus: #074f86;
+  --el-focus-ring: 0 0 0 3px #ffffff, 0 0 0 6px var(--el-focus);
+
+  /* Four material tiers: 4px flat, 4px + shadow, 8px raised, 16px overlay. */
+  --el-elevation-flat: 0 4px 0 rgb(24 33 43 / 10%);
+  --el-elevation-slight: 0 4px 0 rgb(24 33 43 / 12%), 0 5px 14px rgb(24 33 43 / 7%);
+  --el-elevation-raised: 0 8px 20px rgb(24 33 43 / 14%);
+  --el-elevation-overlay: 0 16px 42px rgb(24 33 43 / 24%);
+
+  --el-duration-fast: 140ms;
+  --el-duration-standard: 200ms;
+  --el-content-width: 76rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --el-canvas: #11181f;
+    --el-surface: #19232c;
+    --el-surface-subtle: #202c36;
+    --el-surface-strong: #2b3945;
+    --el-text: #f5f8fa;
+    --el-text-muted: #c0cad3;
+    --el-border: #516170;
+    --el-border-strong: #8292a1;
+    --el-accent: #69bce8;
+    --el-accent-strong: #a2d9f5;
+    --el-accent-soft: #133c56;
+    --el-on-accent: #071922;
+    --el-amber: #ffd078;
+    --el-amber-soft: #503b12;
+    --el-danger: #ff9b8f;
+    --el-danger-soft: #592820;
+    --el-success: #8fe0b9;
+    --el-success-soft: #153d2d;
+    --el-focus: #91d5ff;
+    --el-focus-ring: 0 0 0 3px #11181f, 0 0 0 6px var(--el-focus);
+    --el-elevation-flat: 0 4px 0 rgb(0 0 0 / 24%);
+    --el-elevation-slight: 0 4px 0 rgb(0 0 0 / 28%), 0 5px 14px rgb(0 0 0 / 22%);
+    --el-elevation-raised: 0 8px 20px rgb(0 0 0 / 30%);
+    --el-elevation-overlay: 0 16px 42px rgb(0 0 0 / 48%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* Keep the skip target available without moving it into view. */
+  .el-skip-link {
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    transform: none;
+    white-space: nowrap;
+  }
+
+  .el-skip-link:focus {
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    transform: none;
+  }
+
+  .el-button:active { transform: none; }
+}

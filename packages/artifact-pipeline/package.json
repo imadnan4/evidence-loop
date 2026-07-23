@@ -1,0 +1,1 @@
+{"name":"@evidence-loop/artifact-pipeline","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/index.ts"},"dependencies":{},"scripts":{"typecheck":"tsc --noEmit -p tsconfig.json","check":"pnpm run typecheck && node --experimental-strip-types --test test/scanner.test.ts"}}

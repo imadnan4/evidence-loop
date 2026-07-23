@@ -1,0 +1,17 @@
+FROM node:24.12.0-bookworm-slim
+
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/ui/package.json ./packages/ui/
+COPY apps/web/package.json ./apps/web/
+RUN corepack enable && pnpm install --frozen-lockfile --filter @evidence-loop/web-shell...
+
+COPY packages/ui/src ./packages/ui/src
+COPY apps/web ./apps/web
+RUN pnpm --filter @evidence-loop/web-shell build
+
+USER node
+EXPOSE 3000
+CMD ["node", "apps/web/scripts/serve.mjs"]

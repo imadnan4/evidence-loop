@@ -1,0 +1,33 @@
+name: Synthetic staging verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      synthetic_data_attested:
+        description: "Type SYNTHETIC_ONLY to attest that no education records or PII are used"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-staging-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: inputs.synthetic_data_attested == 'SYNTHETIC_ONLY'
+    runs-on: ubuntu-24.04
+    environment: staging
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@1e60f620b9541d0f1a46dcca7ea247d4a393b6a2
+        with:
+          node-version: 24.12.0
+          cache: pnpm
+      - run: corepack enable && corepack prepare pnpm@11.12.0 --activate && pnpm install --frozen-lockfile
+      - run: pnpm run check:all && pnpm run compose:smoke
+      - name: Boundary statement
+        run: echo "Validation and local health proof only. This workflow does not deploy or approve PII processing."

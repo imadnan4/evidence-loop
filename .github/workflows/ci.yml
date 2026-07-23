@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@1e60f620b9541d0f1a46dcca7ea247d4a393b6a2
+        with:
+          node-version: 24.12.0
+          cache: pnpm
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.12.0 --activate
+      - name: Install frozen workspace
+        run: pnpm install --frozen-lockfile
+      - name: Run workspace checks
+        run: pnpm run check:all
+      - name: Build non-product runtime images
+        run: docker build -f infra/containers/Dockerfile.web . && docker build -f infra/containers/Dockerfile.api . && docker build -f infra/containers/Dockerfile.worker .
+      - name: Compose dependency smoke
+        run: pnpm run compose:smoke
+      - name: Dependency audit
+        run: pnpm audit --audit-level=high
+      - name: Tracked secret heuristic
+        run: |
+          ! git grep -nE '(OPENAI_API_KEY|OIDC_CLIENT_SECRET|S3_SECRET_ACCESS_KEY|MINIO_ROOT_PASSWORD)=[^$[:space:]#].{12,}' -- ':!infra/env/.env.example'

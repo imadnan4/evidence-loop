@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Evidence Loop text check-in" />
+    <title>Text check-in · Evidence Loop</title>
+    <link rel="stylesheet" href="/assets/shell.css" />
+    <link rel="stylesheet" href="/demo/assets/learner-checkin.css" />
+  </head>
+  <body>
+    <a class="el-skip-link" href="#main-content">Skip to main content</a>
+    <div class="el-shell">
+      <header class="el-topbar">
+        <a class="el-brand" href="/"><span class="el-brand-mark" aria-hidden="true">E</span>Evidence Loop</a>
+        <span class="el-badge el-badge--info">Synthetic demo</span>
+      </header>
+      <main class="el-main el-learner-main" id="main-content">
+        <div class="el-content el-learner-content">
+          <p class="el-breadcrumb"><a href="/">Evidence Loop</a> / Text check-in</p>
+          <div id="checkin-status" class="el-visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+          <p id="checkin-error" class="el-inline-error" role="alert" tabindex="-1" hidden></p>
+          <p id="voice-notice" class="el-inline-notice" role="status" aria-live="polite" hidden></p>
+
+          <section id="briefing-view" class="el-stack-lg" aria-labelledby="briefing-title">
+            <div>
+              <p class="el-eyebrow">Before you begin</p>
+              <h1 id="briefing-title">Show your thinking in a short text check-in.</h1>
+              <p class="el-lede">This check-in helps your instructor review evidence of your learning. It does not automatically grade you or make a final decision.</p>
+            </div>
+
+            <section class="el-card el-card--raised el-stack" aria-labelledby="policy-title">
+              <h2 id="policy-title">Assessment policy</h2>
+              <p id="policy-text">Loading the learner-facing policy…</p>
+              <dl class="el-policy-grid">
+                <div class="el-policy-item"><dt>AI use</dt><dd id="ai-use-policy">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Policy version</dt><dd id="policy-version">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Privacy and retention</dt><dd id="privacy-summary">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Completion</dt><dd id="completion-criteria">Loading…</dd></div>
+                <div class="el-policy-item"><dt>Assessment route</dt><dd>Typed responses are always available. If enabled for this assessment, voice is optional and its editable transcript—not audio—is retained here.</dd></div>
+              </dl>
+            </section>
+
+            <aside class="el-callout" aria-labelledby="access-title">
+              <strong id="access-title">Accessibility and support</strong>
+              <p>This text route is available to every learner. You can pause and resume without losing your place. If you need an alternative assessment route before starting, contact your instructor or course support.</p>
+              <button id="show-support" class="el-button el-button--quiet" type="button">Find human support options</button>
+            </aside>
+
+            <label class="el-acknowledgement" for="policy-acknowledgement">
+              <input id="policy-acknowledgement" type="checkbox" />
+              <span>I reviewed the purpose, AI-use policy, privacy summary, and completion options for this check-in.</span>
+            </label>
+            <div class="el-cluster">
+              <button id="start-checkin" class="el-button el-button--primary" type="button" disabled>Start text check-in</button>
+              <span class="el-help">The server sets the finite question and time budget for this check-in.</span>
+            </div>
+          </section>
+
+          <section id="checkin-view" class="el-stack-lg" aria-labelledby="question-heading" hidden>
+            <div class="el-session-banner">
+              <span class="el-badge el-badge--info">Text check-in</span>
+              <span class="el-help">Your typed response is the canonical record.</span>
+            </div>
+            <div class="el-progress" aria-label="Question budget">
+              <div class="el-progress__label"><span id="question-number">Question</span><span id="progress-text">Planned questions remaining</span></div>
+              <progress id="checkin-progress" value="0" max="5">0 of planned questions</progress>
+            </div>
+            <form id="response-form" class="el-card el-card--raised el-question-card">
+              <div>
+                <p class="el-question-label">Take your time. Use your own words and refer to your submitted work where helpful.</p>
+                <h1 id="question-heading" class="el-question-text" tabindex="-1"><span id="question-text"></span></h1>
+              </div>
+              <section id="voice-panel" class="el-voice-panel" aria-labelledby="voice-title" hidden>
+                <div class="el-voice-panel__heading">
+                  <div>
+                    <p class="el-eyebrow">Optional voice response</p>
+                    <h2 id="voice-title">Review and edit your transcript.</h2>
+                  </div>
+                  <span class="el-badge el-badge--info">Voice is optional</span>
+                </div>
+                <p id="voice-status" class="el-help" role="status" aria-live="polite" aria-atomic="true">Connecting your microphone…</p>
+                <div class="el-field">
+                  <label class="el-label" for="voice-transcript">Live transcript</label>
+                  <textarea id="voice-transcript" class="el-textarea" name="voice-transcript" aria-describedby="voice-transcript-help" spellcheck="true"></textarea>
+                  <p id="voice-transcript-help" class="el-help">Edit this text before continuing. The edited transcript is the assessment record; audio is not retained here.</p>
+                </div>
+                <div class="el-question-actions__secondary">
+                  <button id="toggle-voice-capture" class="el-button" type="button" disabled>Pause voice capture</button>
+                  <button id="replay-question" class="el-button el-button--quiet" type="button">Replay question aloud</button>
+                  <button id="switch-to-text" class="el-button el-button--quiet" type="button">Switch to text</button>
+                </div>
+              </section>
+              <div id="typed-response-field" class="el-field">
+                <label class="el-label" for="typed-response">Your typed response</label>
+                <textarea id="typed-response" class="el-textarea" name="typed-response" required aria-describedby="response-help" spellcheck="true"></textarea>
+                <p id="response-help" class="el-help">You can edit before you continue. A response is saved only when you select Continue.</p>
+              </div>
+              <div class="el-question-actions">
+                <div class="el-question-actions__secondary">
+                  <button id="enable-voice" class="el-button" type="button">Use voice for this response</button>
+                  <button id="pause-checkin" class="el-button" type="button">Pause and save my place</button>
+                  <button id="request-follow-up" class="el-button el-button--quiet" type="button">Request human follow-up</button>
+                </div>
+                <button class="el-button el-button--primary" type="submit">Continue</button>
+              </div>
+            </form>
+          </section>
+
+          <section id="paused-view" class="el-card el-card--raised el-paused-panel" aria-labelledby="paused-title" hidden>
+            <p class="el-eyebrow">Check-in paused</p>
+            <h1 id="paused-title" tabindex="-1">Your place is saved.</h1>
+            <p>Your current typed draft remains in this browser. Paused time does not use your planned check-in time.</p>
+            <div class="el-cluster"><button id="resume-checkin" class="el-button el-button--primary" type="button">Resume the same question</button></div>
+          </section>
+
+          <section id="receipt-view" class="el-stack-lg" aria-labelledby="receipt-title" hidden>
+            <div>
+              <p class="el-eyebrow">Check-in receipt</p>
+              <h1 id="receipt-title" tabindex="-1">Your text check-in is complete.</h1>
+              <p id="receipt-intro" class="el-lede"></p>
+            </div>
+            <section class="el-card el-card--raised el-stack" aria-labelledby="receipt-details-title">
+              <h2 id="receipt-details-title">Your record</h2>
+              <div class="el-receipt-meta">
+                <span><strong>Completed:</strong> <time id="receipt-completed"></time></span>
+                <span><strong>Policy version:</strong> <span id="receipt-policy"></span></span>
+                <span>Your instructor reviews any evidence and makes all final decisions.</span>
+              </div>
+              <ol id="receipt-responses" class="el-receipt-list" aria-label="Your questions and typed responses"></ol>
+            </section>
+            <aside class="el-callout"><strong>Need a correction or another route?</strong><p>You can ask your instructor for a correction or an alternative assessment route. This receipt is not a grade.</p></aside>
+          </section>
+
+          <section id="support-view" class="el-card el-card--raised el-stack" aria-labelledby="support-title" hidden>
+            <p class="el-eyebrow">Human support</p>
+            <h1 id="support-title" tabindex="-1">Contact your instructor or course support.</h1>
+            <p>Use the contact route provided in your course to request an accommodation or alternative assessment route. No request has been sent from this page.</p>
+          </section>
+
+          <footer class="el-learner-footer">Synthetic demo account. This text flow does not generate grades, misconduct findings, or personal inferences.</footer>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/demo/assets/learner-checkin.js"></script>
+  </body>
+</html>
