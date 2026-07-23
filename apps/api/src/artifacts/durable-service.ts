@@ -96,6 +96,7 @@ export class DurableArtifactService {
         if (!intent || intent.expires_at <= new Date() || intent.consumed_at) throw conflict();
         return { artifact_id: intent.artifact_id, intent_id: intent.id, expires_at: intent.expires_at.toISOString(), capability: this.responseCapability(intent.id), replayed: true };
       }
+      await tx`SELECT s.id FROM submissions s WHERE s.organization_id=${principal.organizationId} AND s.id=${submissionId} FOR UPDATE`;
       const count = await tx<{ count: string }[]>`SELECT count(*) FROM artifacts WHERE organization_id=${principal.organizationId} AND submission_id=${submissionId} AND status NOT IN ('rejected','deleted')`;
       if (Number(count[0]?.count ?? 0) >= 5) throw conflict();
       const artifactId = randomUUID(); const intentId = randomUUID(); const expiresAt = new Date(Date.now() + 10 * 60_000);

@@ -56,6 +56,17 @@ test("rejects client credentials in a resource-server configuration", () => {
   );
 });
 
+test("staging rejects full loopback range including 127.0.0.2 and IPv6-mapped", () => {
+  assert.throws(
+    () => parseServerEnvironment({ ...local, EVIDENCE_LOOP_ENV: "staging", S3_ENDPOINT: "http://127.0.0.2:9000", OIDC_ISSUER: "https://issuer.example.test", OIDC_JWKS_URI: "https://issuer.example.test/jwks", ALLOWED_WEB_ORIGINS: "https://staging.example.test" }),
+    (error: unknown) => error instanceof EnvironmentError && error.code === "staging-requires-https-non-loopback",
+  );
+  assert.throws(
+    () => parseServerEnvironment({ ...local, EVIDENCE_LOOP_ENV: "staging", S3_ENDPOINT: "http://[::ffff:127.0.0.1]:9000", OIDC_ISSUER: "https://issuer.example.test", OIDC_JWKS_URI: "https://issuer.example.test/jwks", ALLOWED_WEB_ORIGINS: "https://staging.example.test" }),
+    (error: unknown) => error instanceof EnvironmentError && error.code === "staging-requires-https-non-loopback",
+  );
+});
+
 test("staging rejects loopback object storage and placeholder credentials", () => {
   assert.throws(
     () => parseServerEnvironment({ ...local, EVIDENCE_LOOP_ENV: "staging", OIDC_ISSUER: "https://issuer.example.test", OIDC_JWKS_URI: "https://issuer.example.test/jwks", ALLOWED_WEB_ORIGINS: "https://staging.example.test" }),

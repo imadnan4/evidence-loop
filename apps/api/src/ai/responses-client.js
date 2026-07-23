@@ -68,30 +68,42 @@ export class OpenAiResponsesClient {
       throw new AiConfigurationError("Structured model requests require modelId and prompt.");
     }
 
-    const response = await this.#fetch(this.#endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.#apiKey}`,
-        "content-type": "application/json",
-        "x-client-template-version": templateVersion,
-        "x-client-schema-version": schemaVersion,
-      },
-      body: JSON.stringify({
-        model: modelId,
-        input: prompt,
-        // Keep server-side application state authoritative and request no
-        // provider-side response storage for this student-content operation.
-        store: false,
-        text: {
-          format: {
-            type: "json_schema",
-            name: `evidence_loop_${operation}`,
-            strict: true,
-            schema,
-          },
+    const timeoutMs = 60_000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await this.#fetch(this.#endpoint, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.#apiKey}`,
+          "content-type": "application/json",
+          "x-client-template-version": templateVersion,
+          "x-client-schema-version": schemaVersion,
         },
-      }),
-    });
+        body: JSON.stringify({
+          model: modelId,
+          input: prompt,
+          // Keep server-side application state authoritative and request no
+          // provider-side response storage for this student-content operation.
+          store: false,
+          text: {
+            format: {
+              type: "json_schema",
+              name: `evidence_loop_${operation}`,
+              strict: true,
+              schema,
+            },
+          },
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof AiModelError) throw error;
+      throw new AiModelError("The structured model request did not complete.", "model_request_failed");
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       // Do not include provider response text: it can echo sensitive inputs.
       throw new AiModelError("The structured model request did not complete.", "model_request_failed");

@@ -91,11 +91,6 @@ export function buildApp({
     max: rateLimitSettings.max,
     timeWindow: rateLimitSettings.timeWindow,
     keyGenerator: stableRateLimitKey,
-    errorResponseBuilder: () => ({
-      statusCode: 429,
-      code: "rate_limited",
-      message: "Too many requests. Try again later.",
-    }),
   });
 
   app.addHook("onSend", async (_request, reply, payload) => {
