@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
-import Fastify, { type FastifyError, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from "fastify";
 import pino, { type DestinationStream } from "pino";
 import type { Sql } from "postgres";
 import { bearerToken, AuthenticationError, createTokenVerifier } from "../auth/oidc-jwt.ts";
@@ -14,6 +14,7 @@ import { AssessmentHttpError } from "../assessment/durable-errors.ts";
 import { IdempotencyConflictError } from "@evidence-loop/db";
 import type { ArtifactStorage } from "@evidence-loop/artifact-pipeline";
 import { DurableArtifactService, ArtifactHttpError } from "../artifacts/durable-service.ts";
+import { registerSessionRoutes } from "./session.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_RATE_LIMIT = Object.freeze({ max: 100, timeWindow: "1 minute" });
@@ -142,6 +143,7 @@ export function buildApp({
   app.after(() => {
     const assessments = new DurableAssessmentService(client);
     const artifacts = new DurableArtifactService(client, runtimeStorage, environment.objectStorage.secretAccessKey);
+    registerSessionRoutes(app as unknown as FastifyInstance, { client, principal });
     app.setNotFoundHandler(async (_request, reply) => reply.code(404).send(errorBody("not_found", "Resource not found.")));
     app.get("/health/live", async () => ({ status: "live" }));
     app.get("/health/ready", async (_request, reply) => {

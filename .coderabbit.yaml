@@ -1,0 +1,36 @@
+reviews:
+  high_level_summary: true
+  review_status: true
+  poem: false
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        This is a pnpm monorepo (ESM-only, TypeScript 7, node >=24). 
+        Flag missing TypeScript types as HIGH. 
+        Flag async/await without try-catch as MEDIUM.
+    - path: "apps/api/**/*"
+      instructions: |
+        Fastify v5 API server. Check route registration (register, get, post, etc.), 
+        hook usage (onRequest, preHandler), helmet/cors/rate-limit middleware. 
+        Flag missing schema validation on routes. 
+        Flag JWT (jose) verification without proper error handling.
+    - path: "apps/web/**/*"
+      instructions: |
+        Next.js 16 + React 19. Check component structure, missing prop validation. 
+        Flag client/server component boundary violations. 
+        Flag missing error boundaries or loading states.
+    - path: "packages/db/**/*"
+      instructions: |
+        Drizzle ORM + PostgreSQL 17. Check query correctness, 
+        ensure migrations are properly structured. 
+        Flag raw SQL without parameterization.
+    - path: "apps/worker/**/*"
+      instructions: |
+        Background worker with strict security (read_only, no-new-privileges, 
+        memory capped at 512MB). Check for proper error handling, 
+        idempotency, and resource cleanup.
+    - path: "infra/**/*"
+      instructions: |
+        Docker Compose infrastructure (Postgres, MinIO, ClamAV). 
+        Check security hardening (cap_drop, read_only, no-new-privileges). 
+        Flag hardcoded secrets or credentials.

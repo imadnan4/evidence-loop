@@ -4,6 +4,7 @@ import type {
   Response,
   SourceRef,
 } from "@evidence-loop/contracts/v1";
+import type { TransactionSql } from "postgres";
 
 export type Actor = Readonly<{ userId: string }>;
 
@@ -63,10 +64,13 @@ export type ResolvedTextCheckInContext = Readonly<{
 
 /** Authorization and provenance boundary injected by the application layer. */
 export interface TrustedSessionResolver {
-  resolveForLearner(actorId: string, submissionId: string): ResolvedTextCheckInContext | undefined;
+  resolveForLearner(actorId: string, submissionId: string): Promise<ResolvedTextCheckInContext | undefined>;
+  /** Binds the resolver to the caller's open tenant transaction (null releases it). */
+  bind(transaction: TransactionSql | null): void;
 }
 
 export type SessionContext = Readonly<{
+  submissionId: string;
   learnerId: string;
   policy: LearnerFacingPolicy;
   pauseAndResume: boolean;
@@ -194,22 +198,26 @@ export type CheckInReceipt = Readonly<{
 }>;
 
 export interface SessionRepository {
-  saveSession(session: CheckInSession): void;
-  getSession(sessionId: string): CheckInSession | undefined;
-  saveContext(sessionId: string, context: SessionContext): void;
-  getContext(sessionId: string): SessionContext | undefined;
-  saveQuestion(question: Question): void;
-  listQuestions(sessionId: string): readonly Question[];
-  getQuestion(questionId: string): Question | undefined;
-  saveResponse(response: Response): void;
-  getResponseForQuestion(questionId: string): Response | undefined;
-  listResponses(sessionId: string): readonly Response[];
+  /** Binds the repository to the caller's open tenant transaction (null releases it). */
+  bind(transaction: TransactionSql | null): void;
+  saveSession(session: CheckInSession): Promise<void>;
+  getSession(sessionId: string): Promise<CheckInSession | undefined>;
+  /** Returns an existing check-in session owned by the actor for the submission, if any. */
+  findSessionForSubmission(actorId: string, submissionId: string): Promise<CheckInSession | undefined>;
+  saveContext(sessionId: string, context: SessionContext): Promise<void>;
+  getContext(sessionId: string): Promise<SessionContext | undefined>;
+  saveQuestion(question: Question): Promise<void>;
+  listQuestions(sessionId: string): Promise<readonly Question[]>;
+  getQuestion(questionId: string): Promise<Question | undefined>;
+  saveResponse(response: Response): Promise<void>;
+  getResponseForQuestion(questionId: string): Promise<Response | undefined>;
+  listResponses(sessionId: string): Promise<readonly Response[]>;
   /** One transaction: raw transcript, canonical voice response, state/audit changes, and retry result. */
-  commitVoiceResponse(commit: VoiceResponseCommit): SubmittedVoiceResponse;
-  getVoiceTranscriptForResponse(responseId: string): VoiceTranscript | undefined;
-  getVoiceResponseSourceRef(responseId: string): SourceRef | undefined;
-  saveEvent(event: SessionTimelineEvent): void;
-  listEvents(sessionId: string): readonly SessionTimelineEvent[];
-  getIdempotentResult<T>(scope: string, fingerprint: string): T | undefined;
-  saveIdempotentResult<T>(scope: string, fingerprint: string, result: T): void;
+  commitVoiceResponse(commit: VoiceResponseCommit): Promise<SubmittedVoiceResponse>;
+  getVoiceTranscriptForResponse(responseId: string): Promise<VoiceTranscript | undefined>;
+  getVoiceResponseSourceRef(responseId: string): Promise<SourceRef | undefined>;
+  saveEvent(event: SessionTimelineEvent): Promise<void>;
+  listEvents(sessionId: string): Promise<readonly SessionTimelineEvent[]>;
+  getIdempotentResult<T>(scope: string, fingerprint: string): Promise<T | undefined>;
+  saveIdempotentResult<T>(scope: string, fingerprint: string, result: T): Promise<void>;
 }

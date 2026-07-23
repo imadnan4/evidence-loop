@@ -25,6 +25,7 @@ coverage/
 docs/
 skills-lock.json
 .agents/
+.pi-subagents/
 
 # Preserve intentionally empty workspace directories.
 !.gitkeep

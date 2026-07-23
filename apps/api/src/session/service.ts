@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   CheckInSessionSchema,
@@ -13,7 +13,7 @@ import {
   type SourceRef,
 } from "@evidence-loop/contracts/v1";
 
-import { IdempotencyConflictError } from "./in-memory-repository.ts";
+import { IdempotencyConflictError } from "@evidence-loop/db";
 import type {
   Actor,
   CheckInReceipt,
@@ -52,6 +52,7 @@ type Dependencies = Readonly<{ id?: () => string; now?: () => string }>;
 /**
  * Deterministic, text-only F04a workflow control. It owns state transitions;
  * question text is a fixed placeholder planner and no model can change state.
+ * All persistence is asynchronous so the repository can be Postgres-backed.
  */
 export class TextCheckInSessionService {
   private readonly repository: SessionRepository;
@@ -66,16 +67,32 @@ export class TextCheckInSessionService {
     this.now = dependencies.now ?? (() => new Date().toISOString());
   }
 
-  createSession(actor: Actor, input: CreateTextSessionRequest): CheckInSession {
+  /** Binds the repository and resolver to the caller's open tenant transaction
+   * so all persistence and reads run on the same connection within one atomic
+   * unit of work. Must be paired with {@link unbindRepository}. */
+  bindRepository(transaction: import("postgres").TransactionSql): void {
+    this.repository.bind(transaction);
+    this.resolver.bind(transaction);
+  }
+
+  /** Releases the transaction binding set by {@link bindRepository}. */
+  unbindRepository(): void {
+    this.repository.bind(null);
+    this.resolver.bind(null);
+  }
+
+  async createSession(actor: Actor, input: CreateTextSessionRequest): Promise<CheckInSession> {
     const actorId = this.actorId(actor);
     this.assertAllowedKeys(input, "createSession", ["submissionId", "idempotencyKey"]);
     const submissionId = this.requireOpaque(input.submissionId, "submissionId");
     const idempotencyKey = this.requireOpaque(input.idempotencyKey, "idempotencyKey");
-    const resolved = this.resolver.resolveForLearner(actorId, submissionId);
+    const resolved = await this.resolver.resolveForLearner(actorId, submissionId);
     if (!resolved) throw this.notFound();
     const normalized = this.normalizeResolvedContext(resolved, actorId, submissionId);
 
-    return this.idempotent(actorId, "create", idempotencyKey, { submissionId, idempotencyKey }, () => {
+    return this.idempotent(actorId, "create", idempotencyKey, { submissionId, idempotencyKey }, async () => {
+      const existing = await this.repository.findSessionForSubmission(actorId, submissionId);
+      if (existing) throw new SessionError("CONFLICT", "A check-in session already exists for this submission.");
       const session: CheckInSession = CheckInSessionSchema.parse({
         id: this.id(),
         submission_id: normalized.submissionId,
@@ -90,6 +107,7 @@ export class TextCheckInSessionService {
         completed_at: null,
       });
       const context: SessionContext = Object.freeze({
+        submissionId: normalized.submissionId,
         learnerId: normalized.learnerId,
         policy: Object.freeze(normalized.policy),
         pauseAndResume: normalized.pauseAndResume,
@@ -104,25 +122,25 @@ export class TextCheckInSessionService {
         policyShownAt: null,
         policyAcknowledgedAt: null,
       });
-      this.repository.saveSession(session);
-      this.repository.saveContext(session.id, context);
+      await this.repository.saveSession(session);
+      await this.repository.saveContext(session.id, context);
       return session;
     });
   }
 
   /** Records a learner-visible policy display before assessment can start. */
-  showPolicy(actor: Actor, input: SessionMutationInput): PolicyBriefing {
+  async showPolicy(actor: Actor, input: SessionMutationInput): Promise<PolicyBriefing> {
     this.assertAllowedKeys(input, "showPolicy", ["sessionId", "idempotencyKey"]);
-    const session = this.requireOwnedSession(actor, input.sessionId);
-    const context = this.requireContext(session.id);
-    return this.idempotent(actor.userId, "show-policy", input.idempotencyKey, input, () => {
+    const session = await this.requireOwnedSession(actor, input.sessionId);
+    const context = await this.requireContext(session.id);
+    return this.idempotent(actor.userId, "show-policy", input.idempotencyKey, input, async () => {
       if (!context.policyShownAt) {
         const occurredAt = this.now();
-        this.repository.saveContext(session.id, { ...context, policyShownAt: occurredAt });
-        this.recordEvent(session, actor.userId, "policy_shown", null, null, occurredAt);
+        await this.repository.saveContext(session.id, { ...context, policyShownAt: occurredAt });
+        await this.recordEvent(session, actor.userId, "policy_shown", null, null, occurredAt);
       }
       return Object.freeze({
-        session: this.requireSession(session.id),
+        session: await this.requireSession(session.id),
         policy: context.policy,
         textCheckInAvailable: true as const,
         pauseAndResumeAvailable: context.pauseAndResume,
@@ -130,12 +148,16 @@ export class TextCheckInSessionService {
     });
   }
 
-  acknowledgePolicy(actor: Actor, input: SessionMutationInput & Readonly<{ policyVersionId: string }>): CheckInSession {
+  async acknowledgePolicy(actor: Actor, input: SessionMutationInput & Readonly<{ policyVersionId: string }>): Promise<CheckInSession> {
+    return this.acknowledgePolicyImpl(actor, input);
+  }
+
+  private async acknowledgePolicyImpl(actor: Actor, input: SessionMutationInput & Readonly<{ policyVersionId: string }>): Promise<CheckInSession> {
     this.assertAllowedKeys(input, "acknowledgePolicy", ["sessionId", "policyVersionId", "idempotencyKey"]);
-    const session = this.requireOwnedSession(actor, input.sessionId);
-    const context = this.requireContext(session.id);
+    const session = await this.requireOwnedSession(actor, input.sessionId);
+    const context = await this.requireContext(session.id);
     this.requireOpaque(input.policyVersionId, "policyVersionId");
-    return this.idempotent(actor.userId, "acknowledge-policy", input.idempotencyKey, input, () => {
+    return this.idempotent(actor.userId, "acknowledge-policy", input.idempotencyKey, input, async () => {
       if (input.policyVersionId !== session.policy_version_id) {
         throw new SessionError("INVALID_REQUEST", "The displayed policy version does not match this check-in.");
       }
@@ -144,18 +166,18 @@ export class TextCheckInSessionService {
       }
       if (!context.policyAcknowledgedAt) {
         const occurredAt = this.now();
-        this.repository.saveContext(session.id, { ...context, policyAcknowledgedAt: occurredAt });
-        this.recordEvent(session, actor.userId, "policy_acknowledged", null, null, occurredAt);
+        await this.repository.saveContext(session.id, { ...context, policyAcknowledgedAt: occurredAt });
+        await this.recordEvent(session, actor.userId, "policy_acknowledged", null, null, occurredAt);
       }
       return this.requireSession(session.id);
     });
   }
 
-  start(actor: Actor, input: StartTextSessionInput): StartedSession {
+  async start(actor: Actor, input: StartTextSessionInput): Promise<StartedSession> {
     this.assertAllowedKeys(input, "start", ["sessionId", "policyVersionId", "mode", "idempotencyKey"]);
-    const session = this.requireOwnedSession(actor, input.sessionId);
-    const context = this.requireContext(session.id);
-    return this.idempotent(actor.userId, "start", input.idempotencyKey, input, () => {
+    const session = await this.requireOwnedSession(actor, input.sessionId);
+    const context = await this.requireContext(session.id);
+    return this.idempotent(actor.userId, "start", input.idempotencyKey, input, async () => {
       if (input.mode !== "text") throw new SessionError("INVALID_REQUEST", "F04a supports the equivalent typed-response route only.");
       if (input.policyVersionId !== session.policy_version_id) {
         throw new SessionError("INVALID_REQUEST", "The selected policy version does not match this check-in.");
@@ -166,68 +188,63 @@ export class TextCheckInSessionService {
       if (session.state !== "ready") throw new SessionError("INVALID_STATE", "Only a ready check-in can be started.");
 
       const startedAt = this.now();
-      const started = this.saveSession({ ...session, state: "in_progress", started_at: startedAt });
-      this.recordEvent(started, actor.userId, "session_started", "ready", "in_progress", startedAt);
-      const question = this.issueQuestion(started, context, actor.userId);
-      return Object.freeze({ session: this.requireSession(started.id), question });
+      const started = await this.saveSession({ ...session, state: "in_progress", started_at: startedAt });
+      await this.recordEvent(started, actor.userId, "session_started", "ready", "in_progress", startedAt);
+      const question = await this.issueQuestion(started, context, actor.userId);
+      return Object.freeze({ session: await this.requireSession(started.id), question });
     });
   }
 
-  pause(actor: Actor, input: SessionMutationInput): CheckInSession {
+  async pause(actor: Actor, input: SessionMutationInput): Promise<CheckInSession> {
     this.assertAllowedKeys(input, "pause", ["sessionId", "idempotencyKey"]);
-    const session = this.requireOwnedSession(actor, input.sessionId);
-    const context = this.requireContext(session.id);
-    return this.idempotent(actor.userId, "pause", input.idempotencyKey, input, () => {
+    const session = await this.requireOwnedSession(actor, input.sessionId);
+    const context = await this.requireContext(session.id);
+    return this.idempotent(actor.userId, "pause", input.idempotencyKey, input, async () => {
       if (!context.pauseAndResume) throw new SessionError("INVALID_STATE", "Pause and resume are not enabled for this check-in.");
       if (session.state !== "in_progress") throw new SessionError("INVALID_STATE", "Only an in-progress check-in can be paused.");
       const occurredAt = this.now();
-      this.completeIfTimeBudgetReached(session, context, actor.userId, occurredAt);
-      const paused = this.saveSession({ ...session, state: "paused", paused_at: occurredAt });
-      this.recordEvent(paused, actor.userId, "session_paused", "in_progress", "paused", occurredAt);
+      await this.completeIfTimeBudgetReached(session, context, actor.userId, occurredAt);
+      const paused = await this.saveSession({ ...session, state: "paused", paused_at: occurredAt });
+      await this.recordEvent(paused, actor.userId, "session_paused", "in_progress", "paused", occurredAt);
       return paused;
     });
   }
 
-  resume(actor: Actor, input: SessionMutationInput): CheckInSession {
+  async resume(actor: Actor, input: SessionMutationInput): Promise<CheckInSession> {
     this.assertAllowedKeys(input, "resume", ["sessionId", "idempotencyKey"]);
-    const session = this.requireOwnedSession(actor, input.sessionId);
-    const context = this.requireContext(session.id);
-    return this.idempotent(actor.userId, "resume", input.idempotencyKey, input, () => {
+    const session = await this.requireOwnedSession(actor, input.sessionId);
+    const context = await this.requireContext(session.id);
+    return this.idempotent(actor.userId, "resume", input.idempotencyKey, input, async () => {
       if (!context.pauseAndResume) throw new SessionError("INVALID_STATE", "Pause and resume are not enabled for this check-in.");
       if (session.state !== "paused") throw new SessionError("INVALID_STATE", "Only a paused check-in can be resumed.");
       const occurredAt = this.now();
-      const resumed = this.saveSession({ ...session, state: "in_progress", paused_at: null });
-      this.recordEvent(resumed, actor.userId, "session_resumed", "paused", "in_progress", occurredAt);
+      const resumed = await this.saveSession({ ...session, state: "in_progress", paused_at: null });
+      await this.recordEvent(resumed, actor.userId, "session_resumed", "paused", "in_progress", occurredAt);
       return resumed;
     });
   }
 
-  /**
-   * The single F07a submit boundary. It uses the same session repository as
-   * text answers so one transaction owns raw transcript, canonical response,
-   * audit entries, question budget, and idempotency.
-   */
-  submitVoiceResponse(actor: Actor, input: SubmitVoiceResponseInput): SubmittedVoiceResponse {
+  async submitVoiceResponse(actor: Actor, input: SubmitVoiceResponseInput): Promise<SubmittedVoiceResponse> {
     this.assertAllowedKeys(input, "submitVoiceResponse", ["sessionId", "questionId", "transcript", "editedTranscript", "idempotencyKey"]);
     const actorId = this.actorId(actor);
-    const session = this.requireOwnedSession(actor, input.sessionId);
-    const context = this.requireContext(session.id);
+    const session = await this.requireOwnedSession(actor, input.sessionId);
+    const context = await this.requireContext(session.id);
     const transcript = this.requireText(input.transcript, "transcript");
     const editedTranscript = input.editedTranscript === null ? null : this.requireText(input.editedTranscript, "editedTranscript");
     const canonicalText = editedTranscript ?? transcript;
     const idempotencyKey = this.requireOpaque(input.idempotencyKey, "idempotencyKey");
     const scope = `${actorId}:submit-voice-response:${idempotencyKey}`;
-    const fingerprint = stableJson({ sessionId: session.id, questionId: input.questionId, transcript, editedTranscript, idempotencyKey });
-    const replay = this.repository.getIdempotentResult<SubmittedVoiceResponse>(scope, fingerprint);
+    const fingerprint = fingerprintOf({ sessionId: session.id, questionId: input.questionId, transcript, editedTranscript, idempotencyKey });
+    const replay = await this.repository.getIdempotentResult<SubmittedVoiceResponse>(scope, fingerprint);
     if (replay !== undefined) return replay;
 
     if (!context.voiceCheckInEnabled) throw new SessionError("INVALID_STATE", "Voice is not enabled for this check-in.");
     if (session.state !== "in_progress") throw new SessionError("INVALID_STATE", "Voice responses can only be submitted while the check-in is in progress.");
     const submittedAt = this.now();
-    this.completeIfTimeBudgetReached(session, context, actorId, submittedAt);
-    const question = this.requireQuestion(input.questionId);
+    await this.completeIfTimeBudgetReached(session, context, actorId, submittedAt);
+    const question = await this.requireQuestion(input.questionId);
     if (question.session_id !== session.id || question.submission_id !== session.submission_id) throw this.notFound();
-    if (this.repository.getResponseForQuestion(question.id)) throw new SessionError("CONFLICT", "This question already has a canonical response.");
+    if (await this.repository.getResponseForQuestion(question.id)) throw new SessionError("CONFLICT", "This question already has a canonical response.");
 
     const response: Response = ResponseSchema.parse({
       id: this.id(), question_id: question.id, session_id: session.id, submission_id: session.submission_id,
@@ -247,19 +264,19 @@ export class TextCheckInSessionService {
       nextSession = CheckInSessionSchema.parse({ ...session, state: "completed", completed_at: submittedAt });
       events.push(this.newEvent(nextSession, actorId, "session_completed", "in_progress", "completed", submittedAt));
     } else {
-      const planned = this.planQuestion(session, context, actorId, submittedAt);
+      const planned = await this.planQuestion(session, context, actorId, submittedAt);
       nextQuestion = planned.question;
       nextSession = planned.session;
       events.push(planned.event);
     }
     const result: SubmittedVoiceResponse = Object.freeze({ session: nextSession, response, nextQuestion, transcript: voiceTranscript });
     try {
-      return this.repository.commitVoiceResponse({
+      return await this.repository.commitVoiceResponse({
         transcript: voiceTranscript, response, session: nextSession, nextQuestion, events,
         idempotencyScope: scope, idempotencyFingerprint: fingerprint, result,
       });
     } catch (error) {
-      if (error instanceof IdempotencyConflictError) throw new SessionError(error.code, error.message);
+      if (error instanceof IdempotencyConflictError) throw new SessionError("IDEMPOTENCY_CONFLICT", error.message);
       if (error instanceof Error && error.message.includes("canonical response")) {
         throw new SessionError("CONFLICT", "This question already has a canonical response.");
       }
@@ -268,13 +285,13 @@ export class TextCheckInSessionService {
   }
 
   /** Trusted bridge used by the F07a credential/transport service. */
-  resolveVoiceSession(actor: Actor, sessionId: string, questionId?: string) {
-    const session = this.requireOwnedSession(actor, sessionId);
+  async resolveVoiceSession(actor: Actor, sessionId: string, questionId?: string) {
+    const session = await this.requireOwnedSession(actor, sessionId);
     if (questionId !== undefined) {
-      const question = this.requireQuestion(questionId);
+      const question = await this.requireQuestion(questionId);
       if (question.session_id !== session.id || question.submission_id !== session.submission_id) throw this.notFound();
     }
-    const context = this.requireContext(session.id);
+    const context = await this.requireContext(session.id);
     return Object.freeze({
       sessionId: session.id,
       submissionId: session.submission_id,
@@ -284,18 +301,18 @@ export class TextCheckInSessionService {
     });
   }
 
-  submitTextResponse(actor: Actor, input: SubmitTextResponseInput): SubmittedResponse {
+  async submitTextResponse(actor: Actor, input: SubmitTextResponseInput): Promise<SubmittedResponse> {
     this.assertAllowedKeys(input, "submitTextResponse", ["sessionId", "questionId", "canonicalText", "editedText", "idempotencyKey"]);
-    const session = this.requireOwnedSession(actor, input.sessionId);
+    const session = await this.requireOwnedSession(actor, input.sessionId);
     const canonicalText = this.requireText(input.canonicalText, "canonicalText");
     const editedText = input.editedText === null ? null : this.requireText(input.editedText, "editedText");
-    return this.idempotent(actor.userId, "submit-response", input.idempotencyKey, { ...input, canonicalText, editedText }, () => {
+    return this.idempotent(actor.userId, "submit-response", input.idempotencyKey, { ...input, canonicalText, editedText }, async () => {
       if (session.state !== "in_progress") throw new SessionError("INVALID_STATE", "Responses can only be submitted while the check-in is in progress.");
       const submittedAt = this.now();
-      this.completeIfTimeBudgetReached(session, this.requireContext(session.id), actor.userId, submittedAt);
-      const question = this.requireQuestion(input.questionId);
+      await this.completeIfTimeBudgetReached(session, await this.requireContext(session.id), actor.userId, submittedAt);
+      const question = await this.requireQuestion(input.questionId);
       if (question.session_id !== session.id || question.submission_id !== session.submission_id) throw this.notFound();
-      if (this.repository.getResponseForQuestion(question.id)) {
+      if (await this.repository.getResponseForQuestion(question.id)) {
         throw new SessionError("CONFLICT", "This question already has a canonical response.");
       }
       const response: Response = ResponseSchema.parse({
@@ -309,64 +326,64 @@ export class TextCheckInSessionService {
         started_at: session.started_at,
         submitted_at: submittedAt,
       });
-      this.repository.saveResponse(response);
-      this.recordEvent(session, actor.userId, "response_submitted", "in_progress", "in_progress", submittedAt);
+      await this.repository.saveResponse(response);
+      await this.recordEvent(session, actor.userId, "response_submitted", "in_progress", "in_progress", submittedAt);
 
       if (session.questions_asked === session.question_budget) {
-        const completed = this.saveSession({ ...session, state: "completed", completed_at: submittedAt });
-        this.recordEvent(completed, actor.userId, "session_completed", "in_progress", "completed", submittedAt);
+        const completed = await this.saveSession({ ...session, state: "completed", completed_at: submittedAt });
+        await this.recordEvent(completed, actor.userId, "session_completed", "in_progress", "completed", submittedAt);
         return Object.freeze({ session: completed, response, nextQuestion: null });
       }
-      const questionAfterResponse = this.issueQuestion(session, this.requireContext(session.id), actor.userId);
-      return Object.freeze({ session: this.requireSession(session.id), response, nextQuestion: questionAfterResponse });
+      const questionAfterResponse = await this.issueQuestion(session, await this.requireContext(session.id), actor.userId);
+      return Object.freeze({ session: await this.requireSession(session.id), response, nextQuestion: questionAfterResponse });
     });
   }
 
-  requestHumanFollowUp(actor: Actor, input: SessionMutationInput): CheckInSession {
+  async requestHumanFollowUp(actor: Actor, input: SessionMutationInput): Promise<CheckInSession> {
     this.assertAllowedKeys(input, "requestHumanFollowUp", ["sessionId", "idempotencyKey"]);
-    const session = this.requireOwnedSession(actor, input.sessionId);
-    return this.idempotent(actor.userId, "request-human-follow-up", input.idempotencyKey, input, () => {
+    const session = await this.requireOwnedSession(actor, input.sessionId);
+    return this.idempotent(actor.userId, "request-human-follow-up", input.idempotencyKey, input, async () => {
       if (session.state !== "in_progress" && session.state !== "paused") {
         throw new SessionError("INVALID_STATE", "A human follow-up can only be requested during a check-in.");
       }
       const occurredAt = this.now();
-      const requested = this.saveSession({ ...session, state: "human_follow_up", paused_at: null });
-      this.recordEvent(requested, actor.userId, "human_follow_up_requested", session.state, "human_follow_up", occurredAt);
+      const requested = await this.saveSession({ ...session, state: "human_follow_up", paused_at: null });
+      await this.recordEvent(requested, actor.userId, "human_follow_up_requested", session.state, "human_follow_up", occurredAt);
       return requested;
     });
   }
 
-  getReceipt(actor: Actor, sessionId: string): CheckInReceipt {
-    const session = this.requireOwnedSession(actor, sessionId);
+  async getReceipt(actor: Actor, sessionId: string): Promise<CheckInReceipt> {
+    const session = await this.requireOwnedSession(actor, sessionId);
     if (session.state !== "completed" && session.state !== "human_follow_up") {
       throw new SessionError("INVALID_STATE", "A receipt is available after completion or a human follow-up request.");
     }
     return Object.freeze({
       session,
       policyVersionId: session.policy_version_id,
-      questions: this.repository.listQuestions(session.id),
-      responses: this.repository.listResponses(session.id),
+      questions: await this.repository.listQuestions(session.id),
+      responses: await this.repository.listResponses(session.id),
       completedAt: session.completed_at,
     });
   }
 
-  getTimeline(actor: Actor, sessionId: string): readonly SessionTimelineEvent[] {
-    const session = this.requireOwnedSession(actor, sessionId);
+  async getTimeline(actor: Actor, sessionId: string): Promise<readonly SessionTimelineEvent[]> {
+    const session = await this.requireOwnedSession(actor, sessionId);
     return this.repository.listEvents(session.id);
   }
 
   /** Completes only when the configured time limit has elapsed; pauses do not consume the learner's budget. */
-  private completeIfTimeBudgetReached(
+  private async completeIfTimeBudgetReached(
     session: CheckInSession,
     context: SessionContext,
     actorId: string,
     occurredAt: string,
-  ): void {
+  ): Promise<void> {
     const startedAt = Date.parse(session.started_at!);
     const now = Date.parse(occurredAt);
     let pausedAt: number | null = null;
     let pausedMilliseconds = 0;
-    for (const event of this.repository.listEvents(session.id)) {
+    for (const event of await this.repository.listEvents(session.id)) {
       if (event.action === "session_paused") pausedAt = Date.parse(event.occurredAt);
       if (event.action === "session_resumed" && pausedAt !== null) {
         pausedMilliseconds += Date.parse(event.occurredAt) - pausedAt;
@@ -377,21 +394,21 @@ export class TextCheckInSessionService {
     const activeMilliseconds = now - startedAt - pausedMilliseconds;
     if (activeMilliseconds < context.timeBudgetMinutes * 60_000) return;
 
-    const completed = this.saveSession({ ...session, state: "completed", paused_at: null, completed_at: occurredAt });
-    this.recordEvent(completed, actorId, "session_completed", session.state, "completed", occurredAt);
+    const completed = await this.saveSession({ ...session, state: "completed", paused_at: null, completed_at: occurredAt });
+    await this.recordEvent(completed, actorId, "session_completed", session.state, "completed", occurredAt);
     throw new SessionError("INVALID_STATE", "The finite check-in time budget has been reached.");
   }
 
-  private issueQuestion(session: CheckInSession, context: SessionContext, actorId: string): Question {
-    const planned = this.planQuestion(session, context, actorId, this.now());
-    this.repository.saveQuestion(planned.question);
-    this.repository.saveSession(planned.session);
-    this.repository.saveEvent(planned.event);
+  private async issueQuestion(session: CheckInSession, context: SessionContext, actorId: string): Promise<Question> {
+    const planned = await this.planQuestion(session, context, actorId, this.now());
+    await this.repository.saveQuestion(planned.question);
+    await this.repository.saveSession(planned.session);
+    await this.repository.saveEvent(planned.event);
     return planned.question;
   }
 
   /** Builds, but does not persist, the next finite-budget question. */
-  private planQuestion(session: CheckInSession, context: SessionContext, actorId: string, occurredAt: string) {
+  private async planQuestion(session: CheckInSession, context: SessionContext, actorId: string, occurredAt: string) {
     const sequence = session.questions_asked + 1;
     if (sequence > session.question_budget) throw new SessionError("INVALID_STATE", "The finite question budget has been reached.");
     const objective = context.objectives[(sequence - 1) % context.objectives.length]!;
@@ -417,21 +434,21 @@ export class TextCheckInSessionService {
     });
   }
 
-  private saveSession(candidate: CheckInSession): CheckInSession {
+  private async saveSession(candidate: CheckInSession): Promise<CheckInSession> {
     const session = CheckInSessionSchema.parse(candidate);
-    this.repository.saveSession(session);
+    await this.repository.saveSession(session);
     return session;
   }
 
-  private recordEvent(
+  private async recordEvent(
     session: CheckInSession,
     actorId: string,
     action: SessionTimelineEvent["action"],
     priorState: CheckInSession["state"] | null,
     newState: CheckInSession["state"] | null,
     occurredAt: string,
-  ): void {
-    this.repository.saveEvent(this.newEvent(session, actorId, action, priorState, newState, occurredAt));
+  ): Promise<void> {
+    await this.repository.saveEvent(this.newEvent(session, actorId, action, priorState, newState, occurredAt));
   }
 
   private newEvent(
@@ -535,47 +552,47 @@ export class TextCheckInSessionService {
     };
   }
 
-  private idempotent<T>(actorId: string, operation: string, key: string, request: unknown, execute: () => T): T {
+  private async idempotent<T>(actorId: string, operation: string, key: string, request: unknown, execute: () => Promise<T>): Promise<T> {
     const idempotencyKey = this.requireOpaque(key, "idempotencyKey");
     const scope = `${actorId}:${operation}:${idempotencyKey}`;
-    const fingerprint = stableJson(request);
+    const fingerprint = fingerprintOf(request);
     try {
-      const replay = this.repository.getIdempotentResult<T>(scope, fingerprint);
+      const replay = await this.repository.getIdempotentResult<T>(scope, fingerprint);
       if (replay !== undefined) return replay;
     } catch (error) {
-      if (error instanceof IdempotencyConflictError) throw new SessionError(error.code, error.message);
+      if (error instanceof IdempotencyConflictError) throw new SessionError("IDEMPOTENCY_CONFLICT", error.message);
       throw error;
     }
-    const result = execute();
-    this.repository.saveIdempotentResult(scope, fingerprint, result);
+    const result = await execute();
+    await this.repository.saveIdempotentResult(scope, fingerprint, result);
     return result;
   }
 
-  private requireOwnedSession(actor: Actor, sessionId: string): CheckInSession {
-    const session = this.requireSession(sessionId);
-    if (this.requireContext(session.id).learnerId !== this.actorId(actor)) throw this.forbidden();
+  private async requireOwnedSession(actor: Actor, sessionId: string): Promise<CheckInSession> {
+    const session = await this.requireSession(sessionId);
+    if ((await this.requireContext(session.id)).learnerId !== this.actorId(actor)) throw this.forbidden();
     return session;
   }
 
-  private requireSession(sessionId: string): CheckInSession {
-    const session = this.repository.getSession(this.requireOpaque(sessionId, "sessionId"));
+  private async requireSession(sessionId: string): Promise<CheckInSession> {
+    const session = await this.repository.getSession(this.requireOpaque(sessionId, "sessionId"));
     if (!session) throw this.notFound();
     return session;
   }
 
-  private requireContext(sessionId: string): SessionContext {
-    const context = this.repository.getContext(sessionId);
+  private async requireContext(sessionId: string): Promise<SessionContext> {
+    const context = await this.repository.getContext(sessionId);
     if (!context) throw this.notFound();
     return context;
   }
 
-  private requireQuestion(questionId: string): Question {
-    const question = this.repository.getQuestion(this.requireOpaque(questionId, "questionId"));
+  private async requireQuestion(questionId: string): Promise<Question> {
+    const question = await this.repository.getQuestion(this.requireOpaque(questionId, "questionId"));
     if (!question) throw this.notFound();
     return question;
   }
 
-  private assertAllowedKeys(value: unknown, name: string, keys: readonly string[]): asserts value is Record<string, unknown> {
+  private assertAllowedKeys(value: unknown, name: string, _keys: readonly string[]): asserts value is Record<string, unknown> {
     try {
       assertNoProhibitedFields(value, name);
     } catch (error) {
@@ -583,6 +600,7 @@ export class TextCheckInSessionService {
       throw error;
     }
     if (value === null || typeof value !== "object" || Array.isArray(value)) throw this.invalid(`${name} must be an object.`);
+    const keys = (_keys as readonly string[]);
     for (const key of Object.keys(value)) if (!keys.includes(key)) throw this.invalid(`${name}.${key} is not allowed.`);
   }
 
@@ -611,9 +629,9 @@ export class TextCheckInSessionService {
     return value as number;
   }
 
-  private invalid(message: string): SessionError { return new SessionError("INVALID_REQUEST", message); }
-  private forbidden(): SessionError { return new SessionError("FORBIDDEN", "You are not authorized to access this check-in."); }
-  private notFound(): SessionError { return new SessionError("NOT_FOUND", "The requested check-in resource was not found."); }
+  private invalid(message: string): never { throw new SessionError("INVALID_REQUEST", message); }
+  private forbidden(): never { throw new SessionError("FORBIDDEN", "You are not authorized to access this check-in."); }
+  private notFound(): never { throw new SessionError("NOT_FOUND", "The requested check-in resource was not found."); }
 }
 
 function stableJson(value: unknown): string {
@@ -623,4 +641,9 @@ function stableJson(value: unknown): string {
     return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+/** Stable 64-hex idempotency fingerprint matching the check_in_idempotency column constraint. */
+function fingerprintOf(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex");
 }

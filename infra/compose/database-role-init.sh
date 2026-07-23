@@ -15,6 +15,7 @@ SELECT format('GRANT USAGE ON SCHEMA public TO %I, %I', :'app_user', :'worker_us
 SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I', :'app_user') \gexec
 SELECT format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %I', :'app_user') \gexec
 SELECT format('GRANT EXECUTE ON FUNCTION complete_artifact_upload(uuid, uuid, uuid, uuid, text, text, text) TO %I', :'app_user') \gexec
+SELECT format('GRANT EXECUTE ON FUNCTION check_in_create_session(uuid, uuid, uuid, uuid, uuid, uuid, integer, text, text), check_in_transition(uuid, uuid, uuid, uuid, text, boolean, boolean, boolean, text, text), check_in_acknowledge_policy(uuid, uuid, uuid, text, text, text) TO %I', :'app_user') \gexec
 SELECT format('GRANT EXECUTE ON FUNCTION claim_artifact_outbox(text, integer), finish_artifact_outbox(uuid, text, boolean, text), load_claimed_artifact(uuid, text), terminal_claimed_artifact(uuid, text, text, text, text), claim_stale_artifact_upload_intents(text, integer), finish_stale_artifact_upload_intent(uuid, text, boolean, integer, text) TO %I', :'worker_user') \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', current_user, :'app_user') \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I', current_user, :'app_user') \gexec

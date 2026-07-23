@@ -352,3 +352,135 @@ test("B02 rolls back domain, audit, outbox, and idempotency effects on a failed 
   assert.equal(idempotencyRows[0]?.count, "0");
   assert.equal(resultRows[0]?.count, "0");
 });
+
+const learnerSession = randomUUID();
+
+test("C02 durable text check-in enforces tenant ownership, finite budget, and request idempotency", async () => {
+  // Provision a learner, a published assessment version with three approved
+  // assessable objectives, a ready submission, and artifact fragments. These are
+  // inserted directly because published-version objectives/fragments are immutable
+  // (the app route set rejects tampering) and the resolver reads them in a tenant
+  // transaction.
+  await databaseAdmin`INSERT INTO internal_users (id, organization_id, subject) VALUES (${learnerSession}, ${organizationA}, 'issuer|session-learner')`;
+  await databaseAdmin`INSERT INTO course_memberships (course_id, user_id, organization_id, role) VALUES (${courseA}, ${learnerSession}, ${organizationA}, 'learner')`;
+
+  const assessmentId = randomUUID();
+  const versionId = randomUUID();
+  // Objectives may only be inserted while the version is a draft; the immutable
+  // trigger blocks child writes once the version is published. Insert the draft,
+  // its approved objectives, then promote to published.
+  await databaseAdmin`INSERT INTO assessments (id, organization_id, course_id, title, state) VALUES (${assessmentId}, ${organizationA}, ${courseA}, 'C02 check-in assessment', 'draft')`;
+  await databaseAdmin`
+    INSERT INTO assessment_versions (id, organization_id, course_id, assessment_id, version_number, state, title, assignment_instructions, learner_facing_text, ai_use_policy, privacy_summary, completion_criteria, text_check_in, voice_check_in, extra_time, pause_and_resume, alternative_assessment_request, question_budget, time_budget_minutes, created_by, published_by, published_at)
+    VALUES (${versionId}, ${organizationA}, ${courseA}, ${assessmentId}, 1, 'draft', 'C02 version', 'Synthetic instructions.', 'Text check-in is always available.', 'allowed', 'Synthetic privacy.', 'Answer finite questions.', true, false, false, true, true, 3, 8, ${userA}, NULL, NULL)`;
+
+  const objectiveIds = [randomUUID(), randomUUID(), randomUUID()];
+  for (let position = 1; position <= 3; position++) {
+    await databaseAdmin`
+      INSERT INTO assessment_objectives (id, organization_id, assessment_id, assessment_version_id, position, label, description, evidence_criteria, assessable_in_check_in, approved_by, approved_at)
+      VALUES (${objectiveIds[position - 1]!}, ${organizationA}, ${assessmentId}, ${versionId}, ${position}, ${`Objective ${position}`}, 'Synthetic approved objective.', 'A cited explanation.', true, ${userA}, now())`;
+  }
+
+  await databaseAdmin`UPDATE assessment_versions SET state='published', published_by=${userA}, published_at=now() WHERE id=${versionId}`;
+  await databaseAdmin`UPDATE assessments SET state='published', current_published_version_id=${versionId} WHERE id=${assessmentId}`;
+
+  const submissionId = randomUUID();
+  await databaseAdmin`
+    INSERT INTO submissions (id, organization_id, course_id, assessment_id, assessment_version_id, learner_id, state)
+    VALUES (${submissionId}, ${organizationA}, ${courseA}, ${assessmentId}, ${versionId}, ${learnerSession}, 'ready')`;
+
+  const artifactId = randomUUID();
+  const fragmentHash = createHash("sha256").update("hello").digest("hex");
+  await databaseAdmin`
+    INSERT INTO artifacts (id, organization_id, submission_id, quarantine_key, clean_key, derived_key, declared_extension, declared_content_type, byte_size, sha256, status, scanner_version, parser_version, scan_completed_at, parsed_at)
+    VALUES (${artifactId}, ${organizationA}, ${submissionId}, 'synthetic-quarantine', 'synthetic-clean', 'synthetic-derived', '.txt', 'text/plain', 5, ${fragmentHash}, 'ready', 'synthetic', 'synthetic-1', now(), now())`;
+
+  const fragmentIds = [randomUUID(), randomUUID(), randomUUID()];
+  for (let ordinal = 0; ordinal < 3; ordinal++) {
+    await databaseAdmin`
+      INSERT INTO artifact_fragments (id, organization_id, submission_id, artifact_id, ordinal, locator, content_type, content, content_hash, parser_version)
+      VALUES (${fragmentIds[ordinal]!}, ${organizationA}, ${submissionId}, ${artifactId}, ${ordinal}, ${databaseAdmin.json({ kind: "text", fragment: ordinal })}, 'text', 'Synthetic fragment.', ${fragmentHash}, 'synthetic-1')`;
+  }
+
+  const learnerToken = await signToken("issuer|session-learner", organizationA);
+
+  // Create the check-in (request-level idempotency via Idempotency-Key header).
+  const createHeaders = { authorization: `Bearer ${learnerToken}`, "idempotency-key": "c02-create-0001" };
+  const created = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/check-ins`, headers: createHeaders });
+  assert.equal(created.statusCode, 201);
+  assert.equal(created.json().replayed, false);
+  const sessionId = created.json().check_in_id as string;
+  assert.equal(created.json().session.state, "ready");
+
+  const replay = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/check-ins`, headers: createHeaders });
+  assert.equal(replay.statusCode, 200);
+  assert.equal(replay.json().replayed, true);
+  assert.equal(replay.json().check_in_id, sessionId);
+
+  const crossTenantToken = await signToken("issuer|learner-b", organizationB);
+  const crossTenant = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/check-ins`, headers: { authorization: `Bearer ${crossTenantToken}`, "idempotency-key": "c02-cross-tenant" } });
+  assert.equal(crossTenant.statusCode, 404);
+
+  const policyHeaders = { authorization: `Bearer ${learnerToken}`, "idempotency-key": "c02-policy-0001" };
+  const policy = await app.inject({ method: "POST", url: `/v1/check-ins/${sessionId}/policy`, headers: policyHeaders });
+  assert.equal(policy.statusCode, 200);
+  assert.equal(policy.json().session.state, "ready");
+
+  const acknowledge = await app.inject({
+    method: "POST",
+    url: `/v1/check-ins/${sessionId}/policy/acknowledge`,
+    headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": "c02-ack-0001" },
+    payload: { policy_version_id: versionId },
+  });
+  assert.equal(acknowledge.statusCode, 200);
+  assert.equal(acknowledge.json().session.state, "ready");
+
+  const start = await app.inject({
+    method: "POST",
+    url: `/v1/check-ins/${sessionId}/start`,
+    headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": "c02-start-0001" },
+    payload: { policy_version_id: versionId, mode: "text" },
+  });
+  assert.equal(start.statusCode, 200);
+  assert.equal(start.json().session.state, "in_progress");
+  assert.equal(start.json().question.sequence, 1);
+  let sessionState = start.json().session.state as string;
+  let questionId = start.json().question.id as string;
+
+  // Submit exactly the finite question budget of responses.
+  let responseCount = 0;
+  while (sessionState === "in_progress" && questionId) {
+    const submit = await app.inject({
+      method: "POST",
+      url: `/v1/check-ins/${sessionId}/questions/${questionId}/responses`,
+      headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": `c02-response-${responseCount}` },
+      payload: { canonical_text: "Synthetic learner reasoning.", edited_text: null },
+    });
+    assert.equal(submit.statusCode, 200);
+    responseCount++;
+    sessionState = submit.json().session.state;
+    questionId = submit.json().next_question?.id ?? "";
+  }
+  assert.equal(responseCount, 3);
+  assert.equal(sessionState, "completed");
+
+  // Receipt is available only after completion.
+  const receipt = await app.inject({ method: "GET", url: `/v1/check-ins/${sessionId}/receipt`, headers: { authorization: `Bearer ${learnerToken}` } });
+  assert.equal(receipt.statusCode, 200);
+  assert.equal(receipt.json().session.state, "completed");
+  assert.equal((receipt.json().questions as unknown[]).length, 3);
+  assert.equal((receipt.json().responses as unknown[]).length, 3);
+
+  // Timeline records owned events.
+  const timeline = await app.inject({ method: "GET", url: `/v1/check-ins/${sessionId}/timeline`, headers: { authorization: `Bearer ${learnerToken}` } });
+  assert.equal(timeline.statusCode, 200);
+  assert.ok((timeline.json().events as unknown[]).length >= 5);
+
+  // A second create on the same submission reuses the same tenant-scoped session.
+  const second = await app.inject({ method: "POST", url: `/v1/submissions/${submissionId}/check-ins`, headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": "c02-create-0002" } });
+  assert.equal(second.statusCode, 409);
+
+  // Cross-tenant read of the receipt fails closed.
+  const crossReceipt = await app.inject({ method: "GET", url: `/v1/check-ins/${sessionId}/receipt`, headers: { authorization: `Bearer ${crossTenantToken}` } });
+  assert.equal(crossReceipt.statusCode, 404);
+});

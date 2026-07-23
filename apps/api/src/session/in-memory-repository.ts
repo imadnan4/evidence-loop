@@ -1,174 +1,137 @@
-import type { CheckInSession, Question, Response, SourceRef } from "@evidence-loop/contracts/v1";
+import type {
+  CheckInSession,
+  Question,
+  Response,
+  SourceRef,
+} from "@evidence-loop/contracts/v1";
+import { IdempotencyConflictError } from "@evidence-loop/db";
+import type {
+  SessionContext,
+  SessionRepository,
+  SessionTimelineEvent,
+  SubmittedVoiceResponse,
+  VoiceResponseCommit,
+  VoiceTranscript,
+} from "./types.ts";
 
-import type { SessionContext, SessionEventAction, SessionRepository, SessionTimelineEvent, SubmittedVoiceResponse, VoiceResponseCommit, VoiceTranscript } from "./types.ts";
-
-const clone = <T>(value: T): T => structuredClone(value);
-
-const immutable = <T>(value: T): Readonly<T> => {
-  const copy = clone(value);
-  const freeze = (item: unknown): void => {
-    if (item && typeof item === "object" && !Object.isFrozen(item)) {
-      Object.freeze(item);
-      for (const nested of Object.values(item as Record<string, unknown>)) freeze(nested);
-    }
-  };
-  freeze(copy);
-  return copy;
-};
-
-type StoredIdempotentResult = Readonly<{ fingerprint: string; result: unknown }>;
-
-/** In-memory adapter used by the F04a state-machine tests and local demo only. */
+/**
+ * In-memory session repository. Used by unit tests for the finite state
+ * machine. The durable deployment uses `DurableSessionRepository`.
+ */
 export class InMemorySessionRepository implements SessionRepository {
-  #sessions = new Map<string, CheckInSession>();
-  #contexts = new Map<string, SessionContext>();
-  #questions = new Map<string, Question>();
-  #responsesByQuestion = new Map<string, Response>();
-  #voiceTranscriptsByResponse = new Map<string, VoiceTranscript>();
-  #events = new Map<string, SessionTimelineEvent[]>();
-  #idempotency = new Map<string, StoredIdempotentResult>();
+  private readonly sessions = new Map<string, CheckInSession>();
+  private readonly contexts = new Map<string, SessionContext>();
+  private readonly questions = new Map<string, Question>();
+  private readonly responses = new Map<string, Response>();
+  private readonly events = new Map<string, SessionTimelineEvent[]>();
+  private readonly transcripts = new Map<string, VoiceTranscript>();
+  private readonly idempotency = new Map<string, { fingerprint: string; result: unknown }>();
 
-  saveSession(session: CheckInSession): void {
-    this.#sessions.set(session.id, immutable(session));
+  async saveSession(session: CheckInSession): Promise<void> {
+    this.sessions.set(session.id, structuredClone(session));
   }
 
-  getSession(sessionId: string): CheckInSession | undefined {
-    const session = this.#sessions.get(sessionId);
-    return session && immutable(session);
+  async getSession(sessionId: string): Promise<CheckInSession | undefined> {
+    const session = this.sessions.get(sessionId);
+    return session ? structuredClone(session) : undefined;
   }
 
-  saveContext(sessionId: string, context: SessionContext): void {
-    // Policy/objective/provenance snapshots are supplied only at creation;
-    // the service may subsequently record policy visibility acknowledgements.
-    this.#contexts.set(sessionId, immutable(context));
+  async findSessionForSubmission(actorId: string, submissionId: string): Promise<CheckInSession | undefined> {
+    for (const session of this.sessions.values()) {
+      if (session.submission_id === submissionId && (this.contexts.get(session.id)?.learnerId ?? session.learner_id) === actorId) {
+        return structuredClone(session);
+      }
+    }
+    return undefined;
   }
 
-  getContext(sessionId: string): SessionContext | undefined {
-    const context = this.#contexts.get(sessionId);
-    return context && immutable(context);
+  async saveContext(sessionId: string, context: SessionContext): Promise<void> {
+    this.contexts.set(sessionId, structuredClone(context));
   }
 
-  saveQuestion(question: Question): void {
-    if (this.#questions.has(question.id)) throw new Error("Questions are immutable once issued.");
-    this.#questions.set(question.id, immutable(question));
+  async getContext(sessionId: string): Promise<SessionContext | undefined> {
+    const context = this.contexts.get(sessionId);
+    return context ? structuredClone(context) : undefined;
   }
 
-  listQuestions(sessionId: string): readonly Question[] {
-    return [...this.#questions.values()]
+  async saveQuestion(question: Question): Promise<void> {
+    this.questions.set(question.id, structuredClone(question));
+  }
+
+  async listQuestions(sessionId: string): Promise<readonly Question[]> {
+    return [...this.questions.values()]
       .filter((question) => question.session_id === sessionId)
-      .sort((left, right) => left.sequence - right.sequence)
-      .map((question) => immutable(question));
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((question) => structuredClone(question));
   }
 
-  getQuestion(questionId: string): Question | undefined {
-    const question = this.#questions.get(questionId);
-    return question && immutable(question);
+  async getQuestion(questionId: string): Promise<Question | undefined> {
+    const question = this.questions.get(questionId);
+    return question ? structuredClone(question) : undefined;
   }
 
-  saveResponse(response: Response): void {
-    if (this.#responsesByQuestion.has(response.question_id)) {
-      throw new Error("A question already has its canonical response.");
+  async saveResponse(response: Response): Promise<void> {
+    this.responses.set(response.id, structuredClone(response));
+  }
+
+  async getResponseForQuestion(questionId: string): Promise<Response | undefined> {
+    for (const response of this.responses.values()) {
+      if (response.question_id === questionId) return structuredClone(response);
     }
-    this.#responsesByQuestion.set(response.question_id, immutable(response));
+    return undefined;
   }
 
-  getResponseForQuestion(questionId: string): Response | undefined {
-    const response = this.#responsesByQuestion.get(questionId);
-    return response && immutable(response);
-  }
-
-  listResponses(sessionId: string): readonly Response[] {
-    return [...this.#responsesByQuestion.values()]
+  async listResponses(sessionId: string): Promise<readonly Response[]> {
+    return [...this.responses.values()]
       .filter((response) => response.session_id === sessionId)
-      .sort((left, right) => left.submitted_at.localeCompare(right.submitted_at))
-      .map((response) => immutable(response));
+      .sort((a, b) => a.started_at.localeCompare(b.started_at))
+      .map((response) => structuredClone(response));
   }
 
-  /**
-   * In-memory equivalent of the production transaction. Every validation is
-   * completed before mutating any map; durable adapters must use one database
-   * transaction with unique response/question and idempotency constraints.
-   */
-  commitVoiceResponse(commit: VoiceResponseCommit): SubmittedVoiceResponse {
-    const prior = this.#idempotency.get(commit.idempotencyScope);
-    if (prior) {
-      if (prior.fingerprint !== commit.idempotencyFingerprint) throw new IdempotencyConflictError();
-      return immutable(prior.result) as SubmittedVoiceResponse;
-    }
-    if (this.#responsesByQuestion.has(commit.response.question_id)) {
-      throw new Error("A question already has a canonical response.");
-    }
-    if (this.#voiceTranscriptsByResponse.has(commit.transcript.responseId)) {
-      throw new Error("A canonical response already has a voice transcript.");
-    }
-    if (commit.transcript.responseId !== commit.response.id || commit.transcript.questionId !== commit.response.question_id ||
-      commit.transcript.sessionId !== commit.response.session_id || commit.transcript.submissionId !== commit.response.submission_id ||
-      commit.transcript.canonicalText !== commit.response.canonical_text) {
-      throw new Error("Voice transcript and canonical response provenance must match.");
-    }
-    if (commit.nextQuestion && this.#questions.has(commit.nextQuestion.id)) throw new Error("Questions are immutable once issued.");
-    if (commit.session.id !== commit.response.session_id || commit.result.session.id !== commit.session.id ||
-      commit.result.response.id !== commit.response.id || commit.result.transcript.id !== commit.transcript.id) {
-      throw new Error("Voice transaction result must match its committed records.");
-    }
-
-    this.#voiceTranscriptsByResponse.set(commit.transcript.responseId, immutable(commit.transcript));
-    this.#responsesByQuestion.set(commit.response.question_id, immutable(commit.response));
-    this.#sessions.set(commit.session.id, immutable(commit.session));
-    if (commit.nextQuestion) this.#questions.set(commit.nextQuestion.id, immutable(commit.nextQuestion));
+  async commitVoiceResponse(commit: VoiceResponseCommit): Promise<SubmittedVoiceResponse> {
+    this.transcripts.set(commit.transcript.responseId, structuredClone(commit.transcript));
+    await this.saveResponse(structuredClone(commit.response));
+    await this.saveSession(structuredClone(commit.session));
     for (const event of commit.events) {
-      const current = this.#events.get(event.sessionId) ?? [];
-      this.#events.set(event.sessionId, [...current, immutable(event)]);
+      const list = this.events.get(event.sessionId) ?? [];
+      list.push(structuredClone(event));
+      this.events.set(event.sessionId, list);
     }
-    this.#idempotency.set(commit.idempotencyScope, immutable({
+    this.idempotency.set(`${commit.idempotencyScope}:${commit.idempotencyFingerprint}`, {
       fingerprint: commit.idempotencyFingerprint,
       result: commit.result,
-    }));
-    return immutable(commit.result) as SubmittedVoiceResponse;
+    });
+    return structuredClone(commit.result);
   }
 
-  getVoiceTranscriptForResponse(responseId: string): VoiceTranscript | undefined {
-    const transcript = this.#voiceTranscriptsByResponse.get(responseId);
-    return transcript && immutable(transcript);
+  async getVoiceTranscriptForResponse(responseId: string): Promise<VoiceTranscript | undefined> {
+    const transcript = this.transcripts.get(responseId);
+    return transcript ? structuredClone(transcript) : undefined;
   }
 
-  getVoiceResponseSourceRef(responseId: string): SourceRef | undefined {
-    const response = [...this.#responsesByQuestion.values()].find((item) => item.id === responseId);
-    if (!response || response.modality !== "voice") return undefined;
-    return immutable({ source_type: "response", source_id: response.id, submission_id: response.submission_id, locator: `question:${response.question_id}` });
+  async getVoiceResponseSourceRef(responseId: string): Promise<SourceRef | undefined> {
+    const transcript = this.transcripts.get(responseId);
+    return transcript ? { source_type: "voice-transcript", source_id: transcript.id, submission_id: transcript.submissionId, locator: `voice-transcript:${transcript.responseId}` } : undefined;
   }
 
-  saveEvent(event: SessionTimelineEvent): void {
-    const current = this.#events.get(event.sessionId) ?? [];
-    this.#events.set(event.sessionId, [...current, immutable(event)]);
+  async saveEvent(event: SessionTimelineEvent): Promise<void> {
+    const list = this.events.get(event.sessionId) ?? [];
+    list.push(structuredClone(event));
+    this.events.set(event.sessionId, list);
   }
 
-  listEvents(sessionId: string): readonly SessionTimelineEvent[] {
-    return (this.#events.get(sessionId) ?? []).map((event) => immutable(event));
+  async listEvents(sessionId: string): Promise<readonly SessionTimelineEvent[]> {
+    return (this.events.get(sessionId) ?? []).map((event) => structuredClone(event));
   }
 
-  getIdempotentResult<T>(scope: string, fingerprint: string): T | undefined {
-    const stored = this.#idempotency.get(scope);
-    if (!stored) return undefined;
-    if (stored.fingerprint !== fingerprint) {
-      throw new IdempotencyConflictError();
-    }
-    return immutable(stored.result) as T;
+  async getIdempotentResult<T>(scope: string, fingerprint: string): Promise<T | undefined> {
+    const entry = this.idempotency.get(scope);
+    if (!entry) return undefined;
+    if (entry.fingerprint !== fingerprint) throw new IdempotencyConflictError();
+    return entry.result as T;
   }
 
-  saveIdempotentResult<T>(scope: string, fingerprint: string, result: T): void {
-    if (this.#idempotency.has(scope)) throw new Error("Idempotency result is immutable.");
-    this.#idempotency.set(scope, immutable({ fingerprint, result }));
+  async saveIdempotentResult<T>(scope: string, _fingerprint: string, result: T): Promise<void> {
+    this.idempotency.set(scope, { fingerprint: _fingerprint, result });
   }
 }
-
-export class IdempotencyConflictError extends Error {
-  readonly code = "IDEMPOTENCY_CONFLICT";
-
-  constructor() {
-    super("This idempotency key was already used with a different request.");
-    this.name = "IdempotencyConflictError";
-  }
-}
-
-export const isSessionEventAction = (value: string): value is SessionEventAction => value.length > 0;
